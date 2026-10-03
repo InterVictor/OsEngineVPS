@@ -153,9 +153,14 @@ final class PortfolioPage {
         for (int i = 0; i < HEADERS.length; i++) row.addView(cell(values[i], false, WIDTHS[i]));
         TextView action = cell(portfolio != null ? "Сравнить позиции" : position != null ? "Закрыть" : "",
             false, 145);
-        if (portfolio != null) action.setOnClickListener(view -> openCompare.accept(portfolio));
-        else if (position != null) {
-            action.setTextColor(activity.getColor(R.color.orange));
+        if (portfolio != null) {
+            action.setBackgroundResource(R.drawable.button_background);
+            action.setTextColor(activity.getColor(R.color.text_primary));
+            action.setTypeface(null, Typeface.BOLD);
+            action.setGravity(Gravity.CENTER);
+            action.setOnClickListener(view -> openCompare.accept(portfolio));
+        } else if (position != null) {
+            action.setTextColor(activity.getColor(R.color.compare_error));
             action.setOnClickListener(view -> closeOnBoard.accept(owner, position));
         }
         row.addView(action);
@@ -171,10 +176,12 @@ final class PortfolioPage {
                 + portfolio.optString("number"), 16, R.color.text_primary);
             heading.setTypeface(null, Typeface.BOLD);
             card.addView(heading);
-            TextView compare = text("Сравнить позиции", 13, R.color.orange);
-            compare.setPadding(0, dp(8), 0, dp(8));
+            TextView compare = compareButton();
             compare.setOnClickListener(view -> openCompare.accept(portfolio));
-            card.addView(compare);
+            LinearLayout.LayoutParams compareParams = new LinearLayout.LayoutParams(-1, dp(46));
+            compareParams.topMargin = dp(8);
+            compareParams.bottomMargin = dp(8);
+            card.addView(compare, compareParams);
             for (int j = 2; j <= 5; j++)
                 card.addView(line(HEADERS[j], number(portfolio,
                     new String[]{"valueBegin", "valueCurrent", "valueBlocked", "unrealizedPnl"}[j - 2])));
@@ -187,7 +194,8 @@ final class PortfolioPage {
                 TextView name = text(position.optString("securityNameCode"), 15, R.color.text_primary);
                 name.setTypeface(null, Typeface.BOLD);
                 instrument.addView(name);
-                TextView close = text("Закрыть", 13, R.color.orange);
+                // a plain red text link: clearly different from the filled «Сравнить позиции» button
+                TextView close = text("Закрыть", 13, R.color.compare_error);
                 close.setPadding(0, dp(8), 0, dp(8));
                 close.setOnClickListener(view -> closeOnBoard.accept(portfolio, position));
                 instrument.addView(close);
@@ -198,6 +206,15 @@ final class PortfolioPage {
             }
             if (count == 0) card.addView(text("No positions", 13, R.color.text_secondary));
         }
+    }
+
+    /** The filled brand-orange button (same as «Открыть»): the main action of a portfolio. */
+    private TextView compareButton() {
+        TextView button = text("Сравнить позиции", 14, R.color.text_primary);
+        button.setTypeface(null, Typeface.BOLD);
+        button.setGravity(Gravity.CENTER);
+        button.setBackgroundResource(R.drawable.button_background);
+        return button;
     }
 
     private LinearLayout card(LinearLayout parent) {

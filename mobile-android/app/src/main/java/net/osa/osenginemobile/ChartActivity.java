@@ -56,6 +56,7 @@ public final class ChartActivity extends Activity {
     private int lowerTab;
     private String lowerSnapshot;
     private volatile long lastLowerFetchMs;
+    private volatile long lastMarksMs;
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -149,6 +150,19 @@ public final class ChartActivity extends Activity {
         graph.topMargin = dp(8);
         baseChartHeight = graph.height;
         content.addView(chart, graph);
+        android.text.SpannableString legend = new android.text.SpannableString(
+            "▲ вход в лонг    ▼ вход в шорт    ◆ выход");
+        legend.setSpan(new android.text.style.ForegroundColorSpan(0xFF399D36), 0, 1,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        int shortMark = legend.toString().indexOf('▼');
+        legend.setSpan(new android.text.style.ForegroundColorSpan(0xFFFE5400), shortMark, shortMark + 1,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        int exitMark = legend.toString().indexOf('◆');
+        legend.setSpan(new android.text.style.ForegroundColorSpan(0xFFFCEE21), exitMark, exitMark + 1,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        TextView legendView = text("", 12, R.color.text_secondary);
+        legendView.setText(legend);
+        content.addView(legendView);
         // Lower tabs share the width equally and never slide.
         lowerTabs = new LinearLayout(this);
         lowerTabs.setBaselineAligned(false);
@@ -177,6 +191,7 @@ public final class ChartActivity extends Activity {
             JSONObject snapshot = null;
             JSONArray indicatorList = null;
             JSONObject lower = null;
+            JSONArray marks = null;
             String lowerError = null;
             String error = null;
             try {
@@ -236,6 +251,25 @@ public final class ChartActivity extends Activity {
                         if (indicators instanceof JSONObject)
                             indicatorList = ((JSONObject) indicators).optJSONArray("indicators");
                     } catch (Exception ignored) { /* indicators are optional */ }
+                    // Entries and exits of the robot's positions are drawn on the candles (every 15 s is enough).
+                    try {
+                        if (SystemClock.elapsedRealtime() - lastMarksMs >= 15_000) {
+                            JSONObject args = new JSONObject().put("bot_name", botId).put("limit", 500);
+                            java.util.Map<String, Object> positions = bridge.callBatch(terminal,
+                                McpBridge.call("bot_journal_get_open_positions", args),
+                                McpBridge.call("bot_journal_get_closed_positions", args));
+                            JSONArray all = new JSONArray();
+                            for (String key : new String[]{"bot_journal_get_open_positions",
+                                "bot_journal_get_closed_positions"}) {
+                                Object part = positions.get(key);
+                                JSONArray rows = part instanceof JSONObject
+                                    ? ((JSONObject) part).optJSONArray("positions") : null;
+                                if (rows != null) for (int i = 0; i < rows.length(); i++) all.put(rows.opt(i));
+                            }
+                            marks = all;
+                            lastMarksMs = SystemClock.elapsedRealtime();
+                        }
+                    } catch (Exception ignored) { /* marks are optional */ }
                     try {
                         if (SystemClock.elapsedRealtime() - lastLowerFetchMs < 15_000)
                             throw new SkipLowerFetch();
@@ -259,6 +293,7 @@ public final class ChartActivity extends Activity {
             JSONArray resolvedSources = nextSources;
             JSONObject resolvedSnapshot = snapshot;
             JSONArray resolvedIndicators = indicatorList;
+            JSONArray resolvedMarks = marks;
             JSONObject resolvedLower = lower;
             String resolvedLowerError = lowerError;
             String finalError = error;
@@ -287,6 +322,7 @@ public final class ChartActivity extends Activity {
                     JSONArray candles = resolvedSnapshot.optJSONArray("candles");
                     if (candles != null) chart.setCandles(candles);
                     if (resolvedIndicators != null) chart.setIndicators(resolvedIndicators);
+                    chart.setMarks(resolvedMarks, resolvedSnapshot.optString("security_name"));
                     status.setText("Обновлено " + LocalTime.now()
                         .format(DateTimeFormatter.ofPattern("HH:mm:ss"))
                         + " · свечей " + resolvedSnapshot.optInt("count"));
@@ -448,6 +484,92 @@ public final class ChartActivity extends Activity {
         }
 
         void setCandles(JSONArray next) { candles = next; invalidate(); }
+
+        // Entries (triangle in the direction of the trade) and exits (diamond) of the positions of this ticker.
+        private JSONArray rawMarks = new JSONArray();
+        private String marksSecurity = "";
+
+        /** raw == null keeps the positions already known and only re-filters them (ticker tab switched). */
+        void setMarks(JSONArray raw, String security) {
+            if (raw != null) rawMarks = raw;
+            marksSecurity = security == null ? "" : security;
+            invalidate();
+        }
+
+        private long epoch(String time) {
+            try { return java.time.Instant.parse(time).toEpochMilli(); }
+            catch (Exception e) { return Long.MIN_VALUE; }
+        }
+
+        /** Index of the candle that contains the moment, or -1 when it is outside the loaded history. */
+        private int candleAt(long moment, long[] times) {
+            if (times.length == 0 || moment == Long.MIN_VALUE || moment < times[0]) return -1;
+            int found = 0;
+            for (int i = 0; i < times.length; i++) { if (times[i] <= moment) found = i; else break; }
+            return found;
+        }
+
+        private void drawMarks(Canvas canvas, int start, int end, float left, float bar,
+                               double low, double high, float top, float bottom) {
+            if (rawMarks.length() == 0 || candles.length() == 0) return;
+            long[] times = new long[candles.length()];
+            for (int i = 0; i < times.length; i++)
+                times[i] = epoch(candles.optJSONObject(i) == null ? "" : candles.optJSONObject(i).optString("time_utc"));
+            float size = dp(12);
+            for (int p = 0; p < rawMarks.length(); p++) {
+                JSONObject position = rawMarks.optJSONObject(p);
+                if (position == null || "OpeningFail".equals(position.optString("state"))
+                    || !SecurityNames.sameTicker(marksSecurity, position.optString("security_name"))) continue;
+                boolean buy = "Buy".equals(position.optString("side"));
+                int color = buy ? 0xFF399D36 : 0xFFFE5400;
+                int in = candleAt(epoch(position.optString("open_time", position.optString("time_create"))), times);
+                double entry = position.optDouble("entry_price", 0);
+                if (in >= start && in < end && entry > 0) {
+                    float x = left + bar * (in - start + .5f);
+                    float y = y(entry, low, high, top, bottom);
+                    paint.setStyle(Paint.Style.FILL);
+                    paint.setColor(color);
+                    android.graphics.Path path = new android.graphics.Path();
+                    if (buy) {   // arrow up, under the price
+                        path.moveTo(x, y + dp(2));
+                        path.lineTo(x - size / 2, y + dp(2) + size);
+                        path.lineTo(x + size / 2, y + dp(2) + size);
+                    } else {     // arrow down, over the price
+                        path.moveTo(x, y - dp(2));
+                        path.lineTo(x - size / 2, y - dp(2) - size);
+                        path.lineTo(x + size / 2, y - dp(2) - size);
+                    }
+                    path.close();
+                    canvas.drawPath(path, paint);
+                    paint.setStyle(Paint.Style.STROKE);   // white edge keeps the arrow visible on any candle
+                    paint.setStrokeWidth(Math.max(1, dp(1)));
+                    paint.setColor(0xFFFFFFFF);
+                    canvas.drawPath(path, paint);
+                    paint.setStyle(Paint.Style.FILL);
+                }
+                double exit = position.optDouble("close_price", 0);
+                if (!"Done".equals(position.optString("state")) || exit <= 0) continue;
+                int out = candleAt(epoch(position.optString("close_time")), times);
+                if (out >= start && out < end) {
+                    float x = left + bar * (out - start + .5f);
+                    float y = y(exit, low, high, top, bottom);
+                    android.graphics.Path diamond = new android.graphics.Path();
+                    diamond.moveTo(x, y - size * .6f);
+                    diamond.lineTo(x + size * .6f, y);
+                    diamond.lineTo(x, y + size * .6f);
+                    diamond.lineTo(x - size * .6f, y);
+                    diamond.close();
+                    paint.setStyle(Paint.Style.FILL);
+                    paint.setColor(0xFFFCEE21);
+                    canvas.drawPath(diamond, paint);
+                    paint.setStyle(Paint.Style.STROKE);
+                    paint.setStrokeWidth(Math.max(1, dp(1)));
+                    paint.setColor(color);
+                    canvas.drawPath(diamond, paint);
+                    paint.setStyle(Paint.Style.FILL);
+                }
+            }
+        }
 
         /** Indicators of the robot's tab: «Prime» lines go over the price, other areas get panels below. */
         void setIndicators(JSONArray next) {
@@ -627,6 +749,7 @@ public final class ChartActivity extends Activity {
                     if (series != null) drawSeries(canvas, series, start, end, left, bar, low, high, top, bottom);
                 }
             }
+            drawMarks(canvas, start, end, left, bar, low, high, top, bottom);
             drawPanels(canvas, start, end, left, right, bar, bottom + dp(24));
         }
 

@@ -153,6 +153,12 @@ public final class TerminalsActivity extends Activity {
         ((TextView) findViewById(R.id.cpu_value)).setText("CPU  " + percent(snapshot.cpuPercent));
         ((TextView) findViewById(R.id.ram_value)).setText("RAM  " + percent(snapshot.ramPercent));
         ((TextView) findViewById(R.id.disk_value)).setText("Диск  " + percent(snapshot.diskPercent));
+        ((ProgressBar) findViewById(R.id.cpu_bar)).setProgress(
+            Double.isNaN(snapshot.cpuPercent) ? 0 : (int) Math.round(snapshot.cpuPercent));
+        ((ProgressBar) findViewById(R.id.ram_bar)).setProgress(
+            Double.isNaN(snapshot.ramPercent) ? 0 : (int) Math.round(snapshot.ramPercent));
+        ((ProgressBar) findViewById(R.id.disk_bar)).setProgress(
+            Double.isNaN(snapshot.diskPercent) ? 0 : (int) Math.round(snapshot.diskPercent));
         ((TextView) findViewById(R.id.cpu_total)).setText(snapshot.cores > 0 ? coresText(snapshot.cores) : "");
         ((TextView) findViewById(R.id.ram_total)).setText(snapshot.ramTotal > 0 ? gigabytes(snapshot.ramTotal) : "");
         ((TextView) findViewById(R.id.disk_total)).setText(snapshot.diskTotal > 0 ? gigabytes(snapshot.diskTotal) : "");
