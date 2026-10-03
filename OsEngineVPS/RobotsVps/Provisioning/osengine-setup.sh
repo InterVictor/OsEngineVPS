@@ -173,7 +173,7 @@ User=osengine
 WorkingDirectory=$DATA
 ExecStart=$APP/OsEngine --root $DATA --mcp-port $MCP_PORT --mcp-key-file $KEY_FILE
 KillSignal=SIGTERM
-TimeoutStopSec=30
+TimeoutStopSec=60
 Restart=on-failure
 RestartSec=10
 Environment=DOTNET_gcServer=0
@@ -185,8 +185,15 @@ EOF
 if [ -f "$UNIT" ] && [ "$(cat "$UNIT")" = "$NEW_UNIT" ]; then
     echo "SKIP unit unchanged"
 elif [ -f "$UNIT" ]; then
-    # an existing, hand-written unit (e.g. the first VPS) is left alone: it already works
-    echo "SKIP unit exists (not written by this script) — kept as is"
+    # an existing, hand-written unit (e.g. the first VPS) is left alone: it already works; only the stop time limit is raised
+    # (30 -> 60 s: the terminal now waits until its data is written before it exits; takes effect at the next stop)
+    if grep -q '^TimeoutStopSec=30$' "$UNIT"; then
+        sed -i 's/^TimeoutStopSec=30$/TimeoutStopSec=60/' "$UNIT"
+        systemctl daemon-reload
+        echo "OK stop time limit raised to 60 s"
+    else
+        echo "SKIP unit exists (not written by this script) — kept as is"
+    fi
 else
     echo "$NEW_UNIT" > "$UNIT"
     systemctl daemon-reload

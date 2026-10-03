@@ -120,14 +120,82 @@ namespace OsEngine.Headless
 
             Console.WriteLine("Остановка...");
             try { mcp?.Stop(); } catch (Exception ex) { Console.Error.WriteLine(ex); }
-            // как MainWindow: снять флаг работы, дать потокам 5 секунд, завершить процесс
+            // как MainWindow: снять флаг работы, дождаться, пока потоки допишут данные, завершить процесс
             // (потоки OsEngine не фоновые и сами процесс не отпускают)
             MainWindow.ProccesIsWorked = false;
-            Thread.Sleep(5000);
-            Console.WriteLine("Остановлено.");
+            int waited = WaitForDataToSettle(minMs: 5000, quietMs: 2000, maxMs: 40000);
+            Console.WriteLine("Остановлено (ожидание записи данных " + waited + " мс).");
             Console.Out.Flush();
             Environment.Exit(0);
             return 0;
+        }
+
+        // После снятия флага работы потоки OsEngine дописывают данные (журналы позиций, настройки роботов). Ждём не
+        // фиксированные 5 секунд, а пока файлы данных перестанут меняться: не меньше minMs (столько давалось раньше —
+        // потокам нужно время заметить флаг), затем до тишины в quietMs, но не дольше maxMs (systemd убьёт процесс по
+        // TimeoutStopSec=60, поэтому maxMs меньше).
+        private static int WaitForDataToSettle(int minMs, int quietMs, int maxMs)
+        {
+            Stopwatch watch = Stopwatch.StartNew();
+            long lastChange = 0;
+            long stamp = DataStamp();
+
+            while (watch.ElapsedMilliseconds < maxMs)
+            {
+                Thread.Sleep(250);
+                long now = DataStamp();
+
+                if (now != stamp)
+                {
+                    stamp = now;
+                    lastChange = watch.ElapsedMilliseconds;
+                }
+
+                if (watch.ElapsedMilliseconds >= minMs && watch.ElapsedMilliseconds - lastChange >= quietMs)
+                {
+                    break;
+                }
+            }
+
+            return (int)watch.ElapsedMilliseconds;
+        }
+
+        // Отпечаток данных: время последней записи и число файлов в Engine и Data (папка Log не считается: в неё пишут всегда).
+        private static long DataStamp()
+        {
+            long newest = 0;
+            long count = 0;
+
+            foreach (string folder in new[] { "Engine", "Data" })
+            {
+                try
+                {
+                    string root = Path.Combine(Directory.GetCurrentDirectory(), folder);
+                    if (!Directory.Exists(root)) continue;
+                    string logFolder = Path.DirectorySeparatorChar + "Log" + Path.DirectorySeparatorChar;
+
+                    foreach (string file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                    {
+                        if (file.Contains(logFolder)) continue;
+
+                        try
+                        {
+                            newest = Math.Max(newest, File.GetLastWriteTimeUtc(file).Ticks);
+                            count++;
+                        }
+                        catch
+                        {
+                            // файл исчез между перечислением и чтением
+                        }
+                    }
+                }
+                catch
+                {
+                    // папка недоступна — считаем, что менять нечему
+                }
+            }
+
+            return newest * 31 + count;
         }
 
         private static string Arg(string[] args, string name)

@@ -14,7 +14,7 @@ WorkingDirectory=/opt/osengine/data
 ExecStart=/opt/osengine/app/OsEngine --root /opt/osengine/data --mcp-port 6500 --mcp-key-file /opt/osengine/mcp.key
 # SIGTERM -> мягкая остановка (флаг работы снят, 5 с на потоки), затем выход
 KillSignal=SIGTERM
-TimeoutStopSec=30
+TimeoutStopSec=60
 Restart=on-failure
 RestartSec=10
 Environment=DOTNET_gcServer=0

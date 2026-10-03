@@ -116,7 +116,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
         public static Task StopAsync(Func<string, Task<string>> run, VpsInstance instance) =>
             run("systemctl stop " + instance.Service);
 
-        // stop may hang on a stuck process — systemd kills it after TimeoutStopSec (30 s) anyway
+        // stop may hang on a stuck process — systemd kills it after TimeoutStopSec (60 s) anyway
         public static Task RestartAsync(Func<string, Task<string>> run, VpsInstance instance) =>
             run("systemctl restart " + instance.Service);
 
