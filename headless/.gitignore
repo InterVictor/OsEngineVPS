@@ -22,3 +22,4 @@ path-literals.tsv
 # архивы откатов серверных сборок и пакеты
 *.tgz
 *.tar.gz
+publish_out/

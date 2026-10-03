@@ -48,6 +48,15 @@
       <Link>VpsServer\osengine-update.sh</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- osengine-release: updates the terminals from the signed GitHub release (phone app); release-signers = its public key -->
+    <None Update="RobotsVps\Provisioning\osengine-release.sh">
+      <Link>VpsServer\osengine-release.sh</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="RobotsVps\Provisioning\release-signers">
+      <Link>VpsServer\release-signers</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

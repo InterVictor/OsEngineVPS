@@ -109,10 +109,55 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
                 }
 
                 _log("Server is ready");
+                await InstallReleaseToolAsync(sftp, ssh, cancel).ConfigureAwait(false);
             }
             finally
             {
                 Run(ssh, $"rm -f {RemoteScript} {RemotePackage} {RemoteCustom}");
+            }
+        }
+
+        public const string ReleaseToolFileName = "osengine-release.sh";
+        public const string ReleaseSignersFileName = "release-signers";
+
+        // "osengine-release": updates the terminals from the newest SIGNED release of the server package on GitHub
+        // (started from the phone app or by hand) — plus the permanent copy of osengine-update.sh it calls and the public
+        // half of the signing key. Installed or refreshed by every deploy and every build update; no terminal is touched,
+        // and a failure here never fails the deploy / update itself.
+        private async Task InstallReleaseToolAsync(SftpClient sftp, SshClient ssh, CancellationToken cancel)
+        {
+            try
+            {
+                string[] sources = { ReleaseToolFileName, UpdateScriptFileName, ReleaseSignersFileName };
+                string[] remotes = { "/tmp/osengine-release.sh", "/tmp/osengine-update-permanent.sh", "/tmp/release-signers" };
+
+                if (sources.Any(name => !File.Exists(LocalPath(name))))
+                {
+                    _log("The update tool for the phone app (osengine-release) was not installed: its files are missing next to the program");
+                    return;
+                }
+
+                for (int i = 0; i < sources.Length; i++)
+                {
+                    string text = File.ReadAllText(LocalPath(sources[i])).Replace("\r\n", "\n");
+                    await UploadAsync(sftp, new MemoryStream(Encoding.UTF8.GetBytes(text)), remotes[i], sources[i], cancel).ConfigureAwait(false);
+                }
+
+                int exitCode = Run(ssh,
+                    "set -e; install -d -m 755 /etc/osengine /usr/local/lib/osengine /var/lib/osengine-release; "
+                    + "install -m 755 /tmp/osengine-release.sh /usr/local/bin/osengine-release; "
+                    + "install -m 755 /tmp/osengine-update-permanent.sh /usr/local/lib/osengine/osengine-update.sh; "
+                    + "install -m 644 /tmp/release-signers /etc/osengine/allowed_signers; "
+                    + "[ -f /etc/osengine/release.conf ] || printf 'REPO=InterVictor/OsEngineVPS\\nTAG_PREFIX=server-\\n' > /etc/osengine/release.conf; "
+                    + "rm -f /tmp/osengine-release.sh /tmp/osengine-update-permanent.sh /tmp/release-signers");
+
+                _log(exitCode == 0
+                    ? "Update tool for the phone app installed on the server (osengine-release)"
+                    : $"The update tool for the phone app could not be installed (exit code {exitCode})");
+            }
+            catch (Exception ex)
+            {
+                _log("The update tool for the phone app was not installed: " + ex.Message);
             }
         }
 
@@ -151,6 +196,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             {
                 string script = File.ReadAllText(scriptPath).Replace("\r\n", "\n");
                 await UploadAsync(sftp, new MemoryStream(Encoding.UTF8.GetBytes(script)), RemoteUpdateScript, "update script", cancel).ConfigureAwait(false);
+                await InstallReleaseToolAsync(sftp, ssh, cancel).ConfigureAwait(false);
 
                 using (FileStream package = File.OpenRead(packagePath))
                 {

@@ -40,3 +40,24 @@
 - Grids use a copy of TradeGridUi.xaml with native table columns and localization. Existing bot_grid_* operations provide create, base/creator/stop-profit/trailing settings, regimes and deletion. Start/Stop/Close preserve native On/Off/CloseForced semantics. No local trading engine is instantiated. The panel polls levels/open volumes every 5 seconds. Server lookup supports screener child Simple tabs.
 - Consolidated additional stubs for grids: stop-by, auto-start, error-reaction, non-trade-period and logic-entry changes (current scalar settings are displayed read-only); non-trade calendar editors/status indicators; grid preset import/export; rebuilding/clearing existing levels, adding/removing/editing individual levels and opening their position dialog; server clock and middle-entry-price displays; posts collection button. All unsupported controls remain in the parent layout, disabled with explanatory tooltips. Instruction links that have a direct native target remain available. No server restart or real order is triggered by simply opening either dialog.
 - Headless: include Alerts/AlertRemoteSettings.cs in both files.txt and OsEngine.Headless/core-files.props. Rebuild/deploy the server before using alert mutations.
+
+## 2026-10-02 — update of the server build from a signed GitHub release (phone app)
+
+- **Pipeline:** `headless/build-package.sh` builds the package on the PC -> `tools/publish-server-package.sh` signs it (ed25519,
+  `ssh-keygen -Y sign`, key `~/.ssh/osengine_release_sign` stays on this PC) and publishes release `server-<sha256[:8]>` of
+  InterVictor/OsEngineVPS with the package and its `.sig` -> `osengine-release apply` on the VPS (started from the phone app, or
+  by hand) downloads it, verifies checksum and signature against `/etc/osengine/allowed_signers` (public half =
+  `Provisioning/release-signers`) and updates every terminal one by one with `osengine-update.sh` (health check, automatic
+  rollback; the first failure stops the run). The run is a transient systemd unit, so it survives a lost SSH session.
+- **VPS files:** `/usr/local/bin/osengine-release` (`Provisioning/osengine-release.sh`: `check` / `apply [--only svc]` / `status`),
+  `/usr/local/lib/osengine/osengine-update.sh`, `/etc/osengine/{release.conf,allowed_signers}`, state in `/var/lib/osengine-release`.
+  `VpsProvisioner.InstallReleaseToolAsync` installs / refreshes them on every "Deploy / repair" and "Update build".
+- **Why signed:** the VPS trades with real keys; with the signature a stolen GitHub account cannot ship code to it.
+- **Publishing does not restart anything.** Terminals restart only when the update is applied (phone / `osengine-release apply`);
+  the phone shows the open positions first and asks for the screen lock.
+
+**2026-10-02 (later): the public release was taken down.** The OsEngine license (`LICENSE`, 3.2 and 3.3) allows modified code and derived
+software for personal / internal use only, so the package (a build of modified OsEngine) must not sit in a PUBLIC repository without the
+right holder's permission. `tools/publish-server-package.sh` now refuses to publish while the repository is public. Until the permission is
+there or the repository is private, the phone update shows "no signed server release found"; terminals are updated from the PC
+("Update build" in OsEngineVPS). A private repository would need a read-only token on the VPS for the download.
