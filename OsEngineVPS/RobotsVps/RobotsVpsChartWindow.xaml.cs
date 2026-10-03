@@ -976,7 +976,8 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
                 // (Роботы.ВПС → Bots). Правильный признак "эта позиция — с этой вкладки" — поле bot_name в
                 // ответе bot_journal_get_open_positions: сервер кладёт туда имя ВКЛАДКИ (tab.TabName), а не
                 // общее имя бота, и оно однозначно совпадает с _tabName этого окна.
-                if (!closed && !string.Equals(ReadString(p, "bot_name"), _tabName, StringComparison.OrdinalIgnoreCase)) continue;
+                // у скринера вкладка позиции — дочерняя («<бумага> <имя скринера>»): IsOwnTab принимает и её
+                if (!closed && !IsOwnTab(ReadString(p, "bot_name"))) continue;
                 // 1:1 с Journal/Internal/PositionController.GetRow (и с тем же фиксом в RobotsVpsJournalUi):
                 // каждая ячейка — DataGridViewTextBoxCell, включая колонки 0-4 (в DataGridFactory.GetDataGridPosition
                 // это DataGridViewButtonColumn). Обычный grid.Rows.Add() берёт CellTemplate колонки и создал бы там
