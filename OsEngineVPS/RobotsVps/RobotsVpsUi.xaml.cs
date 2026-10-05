@@ -866,6 +866,9 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
             try
             {
+                // the list was read again while the dialog was open
+                instance = _instances.FirstOrDefault(i => string.Equals(i.Name, instance.Name, StringComparison.OrdinalIgnoreCase)) ?? instance;
+
                 AppendLog($"Renaming terminal \"{oldTitle}\" to \"{dialog.NewName}\"...");
                 await VpsInstances.RenameAsync(_sshTunnel.RunCommandAsync, _instances, instance, dialog.NewName).ConfigureAwait(true);
                 AppendLog($"Terminal \"{instance.Name}\" is shown as \"{instance.Title}\" now");

@@ -134,7 +134,16 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
                 throw new InvalidOperationException("The name must be 1-30 characters, without '=', '|' and line breaks");
             }
 
-            if (instances.Any(i => !ReferenceEquals(i, target)
+            // the terminal is found by its technical name: the list is read again every 10 s and its objects are replaced,
+            // so the object the caller holds may be an old one (it was, while the rename dialog was open)
+            VpsInstance current = instances.FirstOrDefault(i => string.Equals(i.Name, target.Name, StringComparison.OrdinalIgnoreCase));
+
+            if (current == null)
+            {
+                throw new InvalidOperationException("The terminal is not in the list of the VPS any more, try again");
+            }
+
+            if (instances.Any(i => !ReferenceEquals(i, current)
                 && (string.Equals(i.Title, title, StringComparison.OrdinalIgnoreCase) || string.Equals(i.Name, title, StringComparison.OrdinalIgnoreCase))))
             {
                 throw new InvalidOperationException("Another terminal already has this name");
@@ -144,7 +153,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
             foreach (VpsInstance instance in instances)
             {
-                string value = ReferenceEquals(instance, target) ? title : instance.Title;
+                string value = ReferenceEquals(instance, current) ? title : instance.Title;
 
                 if (!string.Equals(value, instance.Name, StringComparison.OrdinalIgnoreCase))
                 {
@@ -156,7 +165,9 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             string encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text.ToString()));
             await run("mkdir -p /etc/osengine && echo " + encoded + " | base64 -d > /etc/osengine/names.conf.tmp && mv /etc/osengine/names.conf.tmp /etc/osengine/names.conf && chmod 644 /etc/osengine/names.conf").ConfigureAwait(false);
 
-            target.DisplayName = string.Equals(title, target.Name, StringComparison.OrdinalIgnoreCase) ? null : title;
+            string shown = string.Equals(title, target.Name, StringComparison.OrdinalIgnoreCase) ? null : title;
+            current.DisplayName = shown;
+            target.DisplayName = shown;
         }
 
         public static int NextFreePort(IEnumerable<VpsInstance> existing)
