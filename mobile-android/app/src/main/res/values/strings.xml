@@ -83,4 +83,21 @@
     <string name="connection_info">VPS: %1$s · SSH</string>
     <string name="auto_connect_setting">Подключаться автоматически при запуске</string>
     <string name="about_section">О приложении</string>
+    <string name="vps_name_label">Название VPS</string>
+    <string name="vps_name_hint">например, имя провайдера</string>
+    <string name="vps_connect_button">Подключить</string>
+    <string name="vps_not_connected">Не подключён · %1$s</string>
+    <string name="vps_connection_lost">Связь потеряна, показаны последние данные</string>
+    <string name="vps_add_button">+ Добавить VPS</string>
+    <string name="vps_add_title">Новый VPS</string>
+    <string name="vps_rename_title">Название VPS</string>
+    <string name="vps_remove_title">Убрать VPS из списка?</string>
+    <string name="vps_remove_message">«%1$s» исчезнет из приложения вместе с сохранённым ключом. Сам сервер не затрагивается.</string>
+    <string name="vps_remove_button">Убрать</string>
+    <string name="vps_rename_button">Название</string>
+    <string name="vps_connect_row">Подключить</string>
+    <string name="vps_state_connected">Подключён</string>
+    <string name="vps_state_not_connected">Не подключён</string>
+    <string name="vps_auto_row">Подключаться автоматически</string>
+    <string name="vps_pick_for_update">VPS для обновления: %1$s  ▾</string>
 </resources>

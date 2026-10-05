@@ -31,9 +31,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.crypto.KeyAgreement;
 
+/**
+ * The SSH connections of the phone, one per VPS (see ProfileStore): every call names its VPS. The calls without a VPS id work
+ * with the first VPS (id "1"), as the single-VPS versions did.
+ */
 final class RemoteSsh {
-    private static volatile SSHClient client;
-    private static volatile String connectedHost;
+    private static final java.util.Map<String, SSHClient> clients = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Map<String, String> hosts = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Map<String, Object> locks = new java.util.concurrent.ConcurrentHashMap<>();
 
     private RemoteSsh() { }
 
@@ -84,7 +89,7 @@ final class RemoteSsh {
     }
 
     static void registerDeviceKey(Activity activity, ProfileStore profile,
-                                  String host, String user) throws Exception {
+                                  String vpsId, String host, String user) throws Exception {
         String model = Build.MODEL.replaceAll("[^A-Za-z0-9-]", "");
         if (model.isEmpty()) model = "Android";
         if (model.length() > 32) model = model.substring(0, 32);
@@ -101,7 +106,7 @@ final class RemoteSsh {
             + "cat \"$d/k.pub\" >> \"$HOME/.ssh/authorized_keys\"\n"
             + "cat \"$d/k.pub\"\n"
             + "cat \"$d/k\"\n";
-        String result = run(script);
+        String result = run(vpsId, script);
         int newline = result.indexOf('\n');
         if (newline < 0) throw new IOException("VPS не вернул SSH-ключ устройства");
         String publicKey = result.substring(0, newline).trim();
@@ -113,14 +118,14 @@ final class RemoteSsh {
         SSHClient checked = null;
         try {
             checked = connectWithKey(activity, profile, host, user, privateKey);
-            profile.savePrivateKey(host, user, privateKey, comment);
-            replace(checked, host);
+            profile.savePrivateKey(vpsId, host, user, privateKey, comment);
+            replace(vpsId, checked, host);
         } catch (Exception failure) {
             if (checked != null) {
                 try { checked.close(); }
                 catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
             }
-            try { run(removeAuthorizedKey(publicKey)); }
+            try { run(vpsId, removeAuthorizedKey(publicKey)); }
             catch (Exception rollbackFailure) { failure.addSuppressed(rollbackFailure); }
             throw failure;
         }
@@ -175,43 +180,82 @@ final class RemoteSsh {
         }
     }
 
-    static synchronized void replace(SSHClient next, String host) {
-        close();
-        client = next;
-        connectedHost = host;
+    private static final java.util.Set<String> everConnected = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** true if this VPS was connected at some time in this run of the app (so a lost link is worth a silent re-login) */
+    static boolean wasConnected(String vpsId) { return everConnected.contains(vpsId); }
+
+    /** Puts a connected client in place of the old one of this VPS (the old one is closed). */
+    static void replace(String vpsId, SSHClient next, String host) {
+        everConnected.add(vpsId);
+        SSHClient old = clients.put(vpsId, next);
+        hosts.put(vpsId, host);
+        if (old != null && old != next) {
+            try { old.close(); } catch (IOException ignored) { }
+        }
     }
 
+    static void replace(SSHClient next, String host) { replace(TerminalKey.FIRST_VPS, next, host); }
+
+    /** true if at least one VPS is connected */
     static boolean isConnected() {
-        SSHClient current = client;
+        for (SSHClient current : clients.values()) if (current != null && current.isConnected()) return true;
+        return false;
+    }
+
+    static boolean isConnected(String vpsId) {
+        SSHClient current = clients.get(vpsId);
         return current != null && current.isConnected();
     }
 
-    static String host() { return connectedHost; }
+    /** the address of the connected VPS: the first one that is connected (id order of the profiles is not needed here) */
+    static String host() {
+        String first = hosts.get(TerminalKey.FIRST_VPS);
+        if (first != null && isConnected(TerminalKey.FIRST_VPS)) return first;
+        for (java.util.Map.Entry<String, String> entry : hosts.entrySet())
+            if (isConnected(entry.getKey())) return entry.getValue();
+        return null;
+    }
 
-    static synchronized String run(String shellCommand) throws IOException {
-        if (!isConnected()) throw new IOException("SSH не подключён");
-        try (Session session = client.startSession()) {
-            Session.Command command = session.exec(shellCommand);
-            String output = read(command.getInputStream());
-            command.join(40, TimeUnit.SECONDS);
-            Integer status = command.getExitStatus();
-            if (status == null || status != 0) {
-                String error = read(command.getErrorStream()).trim();
-                throw new IOException(error.isEmpty() ? "Команда VPS завершилась с ошибкой" : error);
+    static String host(String vpsId) { return isConnected(vpsId) ? hosts.get(vpsId) : null; }
+
+    private static Object lock(String vpsId) {
+        return locks.computeIfAbsent(vpsId, id -> new Object());
+    }
+
+    static String run(String shellCommand) throws IOException {
+        return run(TerminalKey.FIRST_VPS, shellCommand);
+    }
+
+    /** Runs a command on one VPS; the commands of one VPS go one after another, different VPS do not wait for each other. */
+    static String run(String vpsId, String shellCommand) throws IOException {
+        synchronized (lock(vpsId)) {
+            SSHClient current = clients.get(vpsId);
+            if (current == null || !current.isConnected()) throw new IOException("SSH не подключён");
+            try (Session session = current.startSession()) {
+                Session.Command command = session.exec(shellCommand);
+                String output = read(command.getInputStream());
+                command.join(40, TimeUnit.SECONDS);
+                Integer status = command.getExitStatus();
+                if (status == null || status != 0) {
+                    String error = read(command.getErrorStream()).trim();
+                    throw new IOException(error.isEmpty() ? "Команда VPS завершилась с ошибкой" : error);
+                }
+                return output;
             }
-            return output;
         }
     }
 
     interface LineSink { void line(String line); }
 
-    /** Long-lived command: reads stdout line by line until it ends. Does not hold the class lock. */
     static void stream(String shellCommand, LineSink sink) throws IOException {
-        SSHClient active;
-        synchronized (RemoteSsh.class) {
-            if (!isConnected()) throw new IOException("SSH не подключён");
-            active = client;
-        }
+        stream(TerminalKey.FIRST_VPS, shellCommand, sink);
+    }
+
+    /** Long-lived command: reads stdout line by line until it ends. Does not hold the lock of the VPS. */
+    static void stream(String vpsId, String shellCommand, LineSink sink) throws IOException {
+        SSHClient active = clients.get(vpsId);
+        if (active == null || !active.isConnected()) throw new IOException("SSH не подключён");
         try (Session session = active.startSession()) {
             Session.Command command = session.exec(shellCommand);
             java.io.BufferedReader reader = new java.io.BufferedReader(
@@ -234,11 +278,17 @@ final class RemoteSsh {
         return result.toString("UTF-8");
     }
 
-    static synchronized void close() {
-        if (client != null) {
-            try { client.close(); } catch (IOException ignored) { }
-            client = null;
+    /** closes the connection of one VPS */
+    static void close(String vpsId) {
+        SSHClient old = clients.remove(vpsId);
+        hosts.remove(vpsId);
+        if (old != null) {
+            try { old.close(); } catch (IOException ignored) { }
         }
-        connectedHost = null;
+    }
+
+    /** closes the connections of all VPS */
+    static void close() {
+        for (String id : new java.util.ArrayList<>(clients.keySet())) close(id);
     }
 }

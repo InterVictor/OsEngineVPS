@@ -6,10 +6,17 @@ import java.util.List;
 final class VpsSnapshot {
     static final class Terminal {
         /** technical name (service osengine = main, osengine-x = x): used for connections, ports and calls */
+        /** the VPS the terminal runs on (ProfileStore id) */
+        String vpsId = TerminalKey.FIRST_VPS;
         String name;
         /** the name somebody gave the terminal in OsEngineVPS (/etc/osengine/names.conf on the VPS); null = none */
         String title;
         String service;
+
+        /** the key that every call to the terminal uses (TerminalKey) */
+        String key() {
+            return TerminalKey.of(vpsId, name);
+        }
 
         /** what a person sees: the given name or, until there is one, the technical name */
         String shownName() {

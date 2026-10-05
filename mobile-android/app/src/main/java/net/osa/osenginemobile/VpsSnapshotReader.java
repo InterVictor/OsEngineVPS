@@ -25,8 +25,17 @@ final class VpsSnapshotReader {
     private long previousTimeNs;
     private final Map<String, Long> previousServiceCpu = new HashMap<>();
 
+    private final String vpsId;
+
+    VpsSnapshotReader() { this(TerminalKey.FIRST_VPS); }
+
+    /** reads one VPS (the CPU load is the difference between two readings, so a reader belongs to one VPS) */
+    VpsSnapshotReader(String vpsId) { this.vpsId = vpsId; }
+
     VpsSnapshot read() throws IOException {
-        return parse(RemoteSsh.run(COMMAND), System.nanoTime());
+        VpsSnapshot snapshot = parse(RemoteSsh.run(vpsId, COMMAND), System.nanoTime());
+        for (VpsSnapshot.Terminal terminal : snapshot.terminals) terminal.vpsId = vpsId;
+        return snapshot;
     }
 
     VpsSnapshot parse(String output, long timeNs) {

@@ -27,6 +27,8 @@ import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     static final String EXTRA_RELOGIN = "relogin_message";
+    /** the id of the VPS (ProfileStore) the screen is opened for */
+    static final String EXTRA_VPS = "vps_id";
     private EditText host;
     private EditText user;
     private EditText password;
@@ -35,6 +37,9 @@ public final class MainActivity extends Activity {
     private TextView status;
     private Button connect;
     private ProfileStore profile;
+    private EditText vpsName;
+    /** the VPS (ProfileStore id) this form connects; the first one unless the screen was opened for another */
+    private String vpsId = TerminalKey.FIRST_VPS;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
 
     @Override
@@ -59,6 +64,7 @@ public final class MainActivity extends Activity {
         });
         scrollRoot.requestApplyInsets();
 
+        vpsName = findViewById(R.id.vps_name);
         host = findViewById(R.id.ssh_host);
         user = findViewById(R.id.ssh_user);
         password = findViewById(R.id.ssh_password);
@@ -67,10 +73,13 @@ public final class MainActivity extends Activity {
         status = findViewById(R.id.connection_status);
         connect = findViewById(R.id.connect_button);
         profile = new ProfileStore(this);
+        String requested = getIntent().getStringExtra(EXTRA_VPS);
+        if (requested != null && profile.ids().contains(requested)) vpsId = requested;
 
-        host.setText(profile.host());
-        user.setText(profile.user());
-        autoConnect.setChecked(profile.autoConnect());
+        vpsName.setText(storedName());
+        host.setText(profile.host(vpsId));
+        user.setText(profile.user(vpsId));
+        autoConnect.setChecked(profile.autoConnect(vpsId));
         TextWatcher targetWatcher = new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) { }
@@ -81,7 +90,7 @@ public final class MainActivity extends Activity {
         updatePasswordVisibility();
 
         autoConnect.setOnCheckedChangeListener((button, checked) -> {
-            profile.setAutoConnect(checked);
+            profile.setAutoConnect(vpsId, checked);
             status.setText(R.string.status_not_connected);
         });
         connect.setOnClickListener(view -> validateForm());
@@ -94,21 +103,46 @@ public final class MainActivity extends Activity {
         layout.width = Math.min(metrics.widthPixels - Math.round(48 * metrics.density), maxWidth);
         column.setLayoutParams(layout);
 
-        String savedKey = profile.loadPrivateKey(profile.host(), profile.user());
+        String savedKey = profile.loadPrivateKey(vpsId, profile.host(vpsId), profile.user(vpsId));
         String lostMessage = getIntent().getStringExtra(EXTRA_RELOGIN);
         if (lostMessage != null) {
             status.setText(lostMessage);
             scheduleRetry();
         }
-        else if (profile.autoConnect()) {
-            if (savedKey != null) beginConnect(profile.host(), profile.user(), null, savedKey);
+        else if (profile.autoConnect(vpsId)) {
+            if (savedKey != null) beginConnect(profile.host(vpsId), profile.user(vpsId), null, savedKey);
             else {
                 // Migrate profiles created by the original password-only Android build.
-                String legacyPassword = profile.loadPassword(profile.host(), profile.user());
+                String legacyPassword = profile.loadPassword(vpsId, profile.host(vpsId), profile.user(vpsId));
                 if (legacyPassword == null) status.setText(R.string.status_auto_needs_password);
-                else beginConnect(profile.host(), profile.user(), legacyPassword, null);
+                else beginConnect(profile.host(vpsId), profile.user(vpsId), legacyPassword, null);
             }
         } else if (savedKey != null) status.setText(R.string.status_key_ready);
+
+        // the other VPS that are set to auto-connect come up quietly behind the first one (no screen of their own)
+        if (lostMessage == null && TerminalKey.FIRST_VPS.equals(vpsId)) connectOthersQuietly();
+    }
+
+    private String storedName() {
+        String given = profile.name(vpsId);
+        // a name that is only the address (the user gave none) is not put in the field
+        return given.equals(profile.host(vpsId)) || given.equals("VPS " + vpsId) ? "" : given;
+    }
+
+    /** Auto-connect VPS other than this form's: with the device key, on a worker, without any screen; failures are shown on the terminals screen. */
+    private void connectOthersQuietly() {
+        for (String other : profile.ids()) {
+            if (other.equals(vpsId) || !profile.autoConnect(other) || profile.host(other).isEmpty()) continue;
+            String otherHost = profile.host(other), otherUser = profile.user(other);
+            String key = profile.loadPrivateKey(other, otherHost, otherUser);
+            if (key == null || RemoteSsh.isConnected(other)) continue;
+            worker.execute(() -> {
+                try {
+                    SSHClient ssh = RemoteSsh.connectWithKey(this, profile, otherHost, otherUser, key);
+                    RemoteSsh.replace(other, ssh, otherHost);
+                } catch (Exception ignored) { /* the watch of the app tries again; the terminals screen shows the state */ }
+            });
+        }
     }
 
     private final android.os.Handler retryHandler = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -116,14 +150,14 @@ public final class MainActivity extends Activity {
 
     /** After a lost link keep trying with the device key while this screen is open (the network may be back). */
     private void scheduleRetry() {
-        String savedKey = profile.loadPrivateKey(profile.host(), profile.user());
+        String savedKey = profile.loadPrivateKey(vpsId, profile.host(vpsId), profile.user(vpsId));
         if (savedKey == null || retrying) return;
         retrying = true;
         retryHandler.postDelayed(new Runnable() {
             @Override public void run() {
                 retrying = false;
-                if (isFinishing() || isDestroyed() || RemoteSsh.isConnected()) return;
-                if (connect.isEnabled()) beginConnect(profile.host(), profile.user(), null, savedKey);
+                if (isFinishing() || isDestroyed() || RemoteSsh.isConnected(vpsId)) return;
+                if (connect.isEnabled()) beginConnect(profile.host(vpsId), profile.user(vpsId), null, savedKey);
                 scheduleRetry();
             }
         }, 8_000);
@@ -132,6 +166,16 @@ public final class MainActivity extends Activity {
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        String requested = intent.getStringExtra(EXTRA_VPS);
+        if (requested != null && profile.ids().contains(requested) && !requested.equals(vpsId)) {
+            // the screen was opened again for another VPS: show that VPS
+            profile.saveForm(vpsId, host.getText().toString().trim(), user.getText().toString().trim(), autoConnect.isChecked());
+            vpsId = requested;
+            vpsName.setText(storedName());
+            host.setText(profile.host(vpsId));
+            user.setText(profile.user(vpsId));
+            autoConnect.setChecked(profile.autoConnect(vpsId));
+        }
         String lost = intent.getStringExtra(EXTRA_RELOGIN);
         if (lost != null) {
             status.setText(lost);
@@ -143,7 +187,7 @@ public final class MainActivity extends Activity {
     }
 
     private void updatePasswordVisibility() {
-        boolean needsPassword = !profile.hasPrivateKey(host.getText().toString().trim(),
+        boolean needsPassword = !profile.hasPrivateKey(vpsId, host.getText().toString().trim(),
             user.getText().toString().trim());
         passwordLabel.setVisibility(needsPassword ? View.VISIBLE : View.GONE);
         password.setVisibility(needsPassword ? View.VISIBLE : View.GONE);
@@ -153,8 +197,9 @@ public final class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-        profile.saveForm(host.getText().toString().trim(),
+        profile.saveForm(vpsId, host.getText().toString().trim(),
             user.getText().toString().trim(), autoConnect.isChecked());
+        saveName();
     }
 
     @Override
@@ -162,6 +207,11 @@ public final class MainActivity extends Activity {
         worker.shutdownNow();
         retryHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
+    }
+
+    private void saveName() {
+        String name = vpsName.getText().toString().trim();
+        if (!name.isEmpty()) profile.rename(vpsId, name);
     }
 
     private void validateForm() {
@@ -177,13 +227,14 @@ public final class MainActivity extends Activity {
         }
         String targetHost = host.getText().toString().trim();
         String targetUser = user.getText().toString().trim();
-        String savedKey = profile.loadPrivateKey(targetHost, targetUser);
+        String savedKey = profile.loadPrivateKey(vpsId, targetHost, targetUser);
         if (password.length() == 0 && savedKey == null) {
             password.setError(getString(R.string.error_password));
             password.requestFocus();
             return;
         }
-        profile.saveForm(targetHost, targetUser, autoConnect.isChecked());
+        profile.saveForm(vpsId, targetHost, targetUser, autoConnect.isChecked());
+        saveName();
         beginConnect(targetHost, targetUser, password.getText().toString(), savedKey);
     }
 
@@ -201,8 +252,8 @@ public final class MainActivity extends Activity {
                         ssh = RemoteSsh.connectWithKey(this, profile, targetHost, targetUser,
                             savedKey);
                     } catch (UserAuthException revoked) {
-                        profile.clearPrivateKey();
-                        RemoteSsh.close();
+                        profile.clearPrivateKey(vpsId);
+                        RemoteSsh.close(vpsId);
                         if (passwordSecret == null || passwordSecret.isEmpty())
                             throw new IOException(getString(R.string.status_key_revoked), revoked);
                     }
@@ -211,19 +262,19 @@ public final class MainActivity extends Activity {
                     if (passwordSecret == null || passwordSecret.isEmpty())
                         throw new IOException(getString(R.string.error_password));
                     ssh = RemoteSsh.connect(this, profile, targetHost, targetUser, passwordSecret);
-                    RemoteSsh.replace(ssh, targetHost);
+                    RemoteSsh.replace(vpsId, ssh, targetHost);
                     try {
-                        RemoteSsh.registerDeviceKey(this, profile, targetHost, targetUser);
+                        RemoteSsh.registerDeviceKey(this, profile, vpsId, targetHost, targetUser);
                     } catch (Exception registrationError) {
                         warning = getString(R.string.status_key_registration_failed,
                             registrationError.getMessage());
                     } finally {
                         // A failed registration means the next login needs a password again.
-                        profile.clearPassword();
+                        profile.clearPassword(vpsId);
                     }
                 } else {
-                    RemoteSsh.replace(ssh, targetHost);
-                    profile.clearPassword();
+                    RemoteSsh.replace(vpsId, ssh, targetHost);
+                    profile.clearPassword(vpsId);
                 }
                 String finalWarning = warning;
                 runOnUiThread(() -> {
@@ -231,7 +282,7 @@ public final class MainActivity extends Activity {
                     password.setText("");
                     connect.setEnabled(true);
                     autoConnect.setEnabled(true);
-                    autoConnect.setChecked(profile.autoConnect());
+                    autoConnect.setChecked(profile.autoConnect(vpsId));
                     updatePasswordVisibility();
                     if (finalWarning == null)
                         startActivity(new Intent(this, TerminalsActivity.class));

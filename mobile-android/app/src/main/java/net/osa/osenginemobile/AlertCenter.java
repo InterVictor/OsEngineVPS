@@ -66,12 +66,13 @@ final class AlertCenter {
         McpBridge bridge;
         try { bridge = new McpBridge(context); }
         catch (Exception e) { setState(terminal, "ошибка: " + e.getMessage()); return; }
-        while (RemoteSsh.isConnected()) {
+        String vpsId = TerminalKey.vps(terminal);
+        while (RemoteSsh.isConnected(vpsId)) {
             try {
                 setState(terminal, "подключение…");
                 String command = bridge.eventCommand(context, terminal);
                 String[] event = {""};
-                RemoteSsh.stream(command, line -> {
+                RemoteSsh.stream(vpsId, command, line -> {
                     if (line.startsWith("event:")) { event[0] = line.substring(6).trim(); return; }
                     if (!line.startsWith("data:")) return;
                     setState(terminal, "поток событий активен");

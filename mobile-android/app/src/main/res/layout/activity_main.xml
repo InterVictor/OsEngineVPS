@@ -64,6 +64,15 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="14sp" />
 
+            <TextView style="@style/OsEngineLabel" android:text="@string/vps_name_label" />
+            <EditText
+                android:id="@+id/vps_name"
+                style="@style/OsEngineInput"
+                android:hint="@string/vps_name_hint"
+                android:imeOptions="actionNext"
+                android:inputType="text"
+                android:maxLength="30" />
+
             <TextView style="@style/OsEngineLabel" android:text="@string/ssh_host" />
             <EditText
                 android:id="@+id/ssh_host"

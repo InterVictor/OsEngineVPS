@@ -52,7 +52,7 @@ final class McpBridge {
             + "\"))' " + target.port + " " + encoded(target.keyFile)
             + " " + (target.session.isEmpty() ? "-" : encoded(target.session))
             + " " + encoded(request.toString());
-        JSONObject response = new JSONObject(RemoteSsh.run(command));
+        JSONObject response = new JSONObject(RemoteSsh.run(TerminalKey.vps(instanceName), command));
         if (response.has("session")) target.session = response.optString("session", "");
         if (response.has("error")) throw new IOException(response.optString("error"));
         JSONArray results = response.getJSONArray("results");
@@ -85,7 +85,10 @@ final class McpBridge {
             + target.port + " " + encoded(target.keyFile);
     }
 
-    private static Target discover(String instanceName) throws IOException {
+    /** instanceName is the terminal key (see TerminalKey): it names the VPS and the terminal on it */
+    private static Target discover(String instanceKey) throws IOException {
+        String vpsId = TerminalKey.vps(instanceKey);
+        String instanceName = TerminalKey.name(instanceKey);
         String service = "main".equals(instanceName) ? "osengine" : "osengine-" + instanceName;
         if (!service.matches("osengine(?:-[a-z0-9-]+)?"))
             throw new IOException("Недопустимое имя терминала");
@@ -94,7 +97,7 @@ final class McpBridge {
             + "port=$(printf '%s' \"$ex\" | sed -n 's/.*--mcp-port \\([0-9]*\\).*/\\1/p'); "
             + "key=$(printf '%s' \"$ex\" | sed -n 's/.*--mcp-key-file \\([^ ]*\\).*/\\1/p'); "
             + "printf '%s|%s' \"$port\" \"$key\"";
-        String[] parts = RemoteSsh.run(command).trim().split("\\|", 2);
+        String[] parts = RemoteSsh.run(vpsId, command).trim().split("\\|", 2);
         if (parts.length != 2 || !parts[0].matches("[0-9]{2,5}") || parts[1].isEmpty())
             throw new IOException("В службе терминала не найдены MCP-порт и файл ключа");
         int port = Integer.parseInt(parts[0]);

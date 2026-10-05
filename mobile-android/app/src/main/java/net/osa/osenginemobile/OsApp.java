@@ -27,7 +27,7 @@ public final class OsApp extends Application {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private boolean reconnecting;
-    private int failures;
+    private final java.util.Map<String, Integer> failures = new java.util.HashMap<>();
     private final Runnable watch = new Runnable() {
         @Override public void run() {
             check();
@@ -62,27 +62,46 @@ public final class OsApp extends Application {
         });
     }
 
-    /** Runs on the main thread: nothing to do while connected, on the login screen or in the background. */
+    /**
+     * Runs on the main thread: nothing to do while every VPS that was connected is still connected, on the login screen or in
+     * the background. A lost VPS is logged in again silently; the login screen of that VPS is shown only when no VPS is
+     * connected at all and the silent way is impossible (the other VPS keep working meanwhile).
+     */
     private void check() {
         Activity activity = resumed.get();
         if (activity == null) { main.removeCallbacks(watch); return; }   // restarted on the next resume
         if (activity instanceof MainActivity) return;
-        if (RemoteSsh.isConnected()) { failures = 0; return; }
         if (reconnecting) return;
         ProfileStore profile = new ProfileStore(this);
-        String host = profile.host(), user = profile.user();
-        String key = profile.loadPrivateKey(host, user);
-        if (key == null) { showLogin(activity, getString(R.string.status_connection_lost_login)); return; }
+        // the VPS to keep connected: the first one always (as before several VPS existed), the others if they were connected
+        // in this run or are set to auto-connect; one that was never set up (no address) is not wanted
+        String target = null;
+        String keyless = null;
+        for (String id : profile.ids()) {
+            boolean wanted = TerminalKey.FIRST_VPS.equals(id) || RemoteSsh.wasConnected(id) || profile.autoConnect(id);
+            if (!wanted || profile.host(id).isEmpty() || RemoteSsh.isConnected(id)) continue;
+            if (profile.loadPrivateKey(id, profile.host(id), profile.user(id)) != null) { target = id; break; }
+            if (keyless == null) keyless = id;
+        }
+        if (target == null) {
+            failures.clear();
+            if (keyless != null && !RemoteSsh.isConnected())
+                showLogin(activity, getString(R.string.status_connection_lost_login), keyless);
+            return;
+        }
+        String vpsId = target;
+        String host = profile.host(vpsId), user = profile.user(vpsId);
+        String key = profile.loadPrivateKey(vpsId, host, user);
         reconnecting = true;
         worker.execute(() -> {
             String problem = null;
             boolean login = false;
             try {
                 SSHClient ssh = RemoteSsh.connectWithKey(activity, profile, host, user, key);
-                RemoteSsh.replace(ssh, host);
+                RemoteSsh.replace(vpsId, ssh, host);
                 AlertCenter.restartStreams(getApplicationContext());
             } catch (UserAuthException revoked) {
-                profile.clearPrivateKey();
+                profile.clearPrivateKey(vpsId);
                 problem = getString(R.string.status_key_revoked);
                 login = true;
             } catch (Exception e) {
@@ -92,22 +111,24 @@ public final class OsApp extends Application {
             boolean forceLogin = login;
             main.post(() -> {
                 reconnecting = false;
-                if (finalProblem == null) { failures = 0; return; }
-                failures++;
+                if (finalProblem == null) { failures.remove(vpsId); return; }
+                int count = failures.containsKey(vpsId) ? failures.get(vpsId) + 1 : 1;
+                failures.put(vpsId, count);
                 Activity current = resumed.get();
-                if (current != null && !(current instanceof MainActivity)
-                    && (forceLogin || failures >= FAILURES_BEFORE_LOGIN))
+                if (current != null && !(current instanceof MainActivity) && !RemoteSsh.isConnected()
+                    && (forceLogin || count >= FAILURES_BEFORE_LOGIN))
                     showLogin(current, forceLogin ? finalProblem
-                        : getString(R.string.status_connection_lost_login) + "\n" + finalProblem);
+                        : getString(R.string.status_connection_lost_login) + "\n" + finalProblem, vpsId);
             });
         });
     }
 
-    private void showLogin(Activity from, String message) {
-        failures = 0;
+    private void showLogin(Activity from, String message, String vpsId) {
+        failures.remove(vpsId);
         Intent intent = new Intent(from, MainActivity.class)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra(MainActivity.EXTRA_RELOGIN, message);
+            .putExtra(MainActivity.EXTRA_RELOGIN, message)
+            .putExtra(MainActivity.EXTRA_VPS, vpsId);
         from.startActivity(intent);
     }
 }

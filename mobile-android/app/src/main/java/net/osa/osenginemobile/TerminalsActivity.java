@@ -27,17 +27,22 @@ import java.util.concurrent.Executors;
 public final class TerminalsActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private final VpsSnapshotReader reader = new VpsSnapshotReader();
+    /** one reader per VPS (the CPU load is the difference between two readings of the same VPS) */
+    private final java.util.Map<String, VpsSnapshotReader> readers = new java.util.HashMap<>();
+    private ProfileStore profile;
     private final Runnable refresh = this::loadSnapshot;
     private TextView status;
-    private LinearLayout terminalList;
+    private LinearLayout sections;
     private boolean loading;
     private boolean visible;
     private long vpsRamTotal;
     private boolean preview;
-    private VpsSnapshot lastSnapshot;
+    /** the last snapshot of every VPS (shown dimmed when the VPS cannot be read any more) */
+    private final java.util.Map<String, VpsSnapshot> lastSnapshots = new java.util.LinkedHashMap<>();
+    private java.util.Map<String, String> problems = new java.util.HashMap<>();
     private final Set<String> restartingServices = new HashSet<>();
     private boolean unavailable;
+    /** the open positions and the profit of the day are keyed by the terminal key, the services being restarted by "vps:service" */
     /** Per terminal: open positions and the profit of today (absent until the first answer). */
     private static final class Stats { int open; double profit; }
     private final java.util.Map<String, Stats> stats = new java.util.HashMap<>();
@@ -49,13 +54,15 @@ public final class TerminalsActivity extends Activity {
         setContentView(R.layout.activity_terminals);
         ScreenLayout.apply(this, 760);
         status = findViewById(R.id.server_status);
-        terminalList = findViewById(R.id.terminal_list);
+        sections = findViewById(R.id.sections_container);
+        profile = new ProfileStore(this);
         findViewById(R.id.settings_button).setOnClickListener(view ->
             startActivity(new Intent(this, SettingsActivity.class)));
         preview =(getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
             && getIntent().getBooleanExtra("preview_terminals", false);
         if (preview) {
-            showSnapshot(previewSnapshot());
+            lastSnapshots.put(TerminalKey.FIRST_VPS, previewSnapshot());
+            renderAll();
             status.setText(R.string.terminal_preview);
             return;
         }
@@ -83,30 +90,47 @@ public final class TerminalsActivity extends Activity {
         super.onDestroy();
     }
 
+    /** the VPS shown on the screen: those with an address (or already connected); the first one when nothing is set up yet */
+    private java.util.List<String> configuredVps() {
+        java.util.List<String> result = new java.util.ArrayList<>();
+        for (String id : profile.ids())
+            if (!profile.host(id).isEmpty() || RemoteSsh.isConnected(id)) result.add(id);
+        if (result.isEmpty()) result.add(TerminalKey.FIRST_VPS);
+        return result;
+    }
+
     private void loadSnapshot() {
         handler.removeCallbacks(refresh);
         if (!visible || loading) return;
+        java.util.List<String> vps = configuredVps();
         if (!RemoteSsh.isConnected()) {
-            if (lastSnapshot != null) renderSnapshot(lastSnapshot, false);
+            // nothing connected: the sections show what was seen last and a button to connect each VPS
+            if (!lastSnapshots.isEmpty() || vps.size() > 1) renderAll();
             status.setText(R.string.status_not_connected);
             return;
         }
         loading = true;
         worker.execute(() -> {
-            VpsSnapshot snapshot = null;
-            String error = null;
-            try { snapshot = reader.read(); }
-            catch (Exception e) { error = e.getMessage(); }
-            if (snapshot != null) loadStats(snapshot);
-            VpsSnapshot finalSnapshot = snapshot;
-            String finalError = error;
+            java.util.Map<String, VpsSnapshot> fresh = new java.util.LinkedHashMap<>();
+            java.util.Map<String, String> failed = new java.util.HashMap<>();
+            for (String id : vps) {
+                if (!RemoteSsh.isConnected(id)) continue;
+                VpsSnapshotReader reader = readers.get(id);
+                if (reader == null) { reader = new VpsSnapshotReader(id); readers.put(id, reader); }
+                try {
+                    VpsSnapshot snapshot = reader.read();
+                    loadStats(snapshot);
+                    fresh.put(id, snapshot);
+                } catch (Exception e) {
+                    failed.put(id, e.getMessage() == null ? "ошибка" : e.getMessage());
+                }
+            }
             runOnUiThread(() -> {
                 loading = false;
                 if (!visible || isDestroyed()) return;
-                if (finalError != null) {
-                    if (lastSnapshot != null) renderSnapshot(lastSnapshot, false);
-                    status.setText(finalError);
-                } else showSnapshot(finalSnapshot);
+                lastSnapshots.putAll(fresh);
+                problems = failed;
+                renderAll();
                 handler.postDelayed(refresh, 10_000);
             });
         });
@@ -120,7 +144,7 @@ public final class TerminalsActivity extends Activity {
         for (VpsSnapshot.Terminal terminal : snapshot.terminals) {
             if (!"active".equals(terminal.state)) continue;
             try {
-                java.util.Map<String, Object> result = bridge.callBatch(terminal.name,
+                java.util.Map<String, Object> result = bridge.callBatch(terminal.key(),
                     McpBridge.call("bot_get_list", null),
                     McpBridge.call("bot_journal_get_equity", new org.json.JSONObject().put("chart_type", mode)));
                 Object list = result.get("bot_get_list");
@@ -135,42 +159,96 @@ public final class TerminalsActivity extends Activity {
                     if (bot != null) value.open += bot.optInt("open_positions_count");
                 }
                 value.profit = points == null ? 0 : DayProfit.today(points);
-                synchronized (stats) { stats.put(terminal.name, value); }
+                synchronized (stats) { stats.put(terminal.key(), value); }
             } catch (Exception ignored) { /* keep the previous numbers */ }
         }
     }
 
-    private void showSnapshot(VpsSnapshot snapshot) {
-        lastSnapshot = snapshot;
-        renderSnapshot(snapshot, true);
+    /** One section per VPS: its name (when there are several), its resources and its terminals, or a button to connect it. */
+    private void renderAll() {
+        java.util.List<String> vps = configuredVps();
+        boolean several = vps.size() > 1;
+        sections.removeAllViews();
+        StringBuilder hosts = new StringBuilder();
+        String firstProblem = null;
+        for (String id : vps) {
+            View section = getLayoutInflater().inflate(R.layout.item_vps_section, sections, false);
+            TextView title = section.findViewById(R.id.vps_title);
+            TextView state = section.findViewById(R.id.vps_state);
+            TextView connect = section.findViewById(R.id.vps_connect);
+            View body = section.findViewById(R.id.vps_body);
+            boolean connected = RemoteSsh.isConnected(id);
+            String problem = problems.get(id);
+            VpsSnapshot snapshot = lastSnapshots.get(id);
+            if (several) {
+                title.setVisibility(View.VISIBLE);
+                title.setText(profile.name(id));
+                if (!(sections.getChildCount() > 0)) ((LinearLayout.LayoutParams) title.getLayoutParams()).topMargin = dp(18);
+            }
+            if (connected && RemoteSsh.host(id) != null) {
+                if (hosts.length() > 0) hosts.append(", ");
+                hosts.append(RemoteSsh.host(id));
+            }
+            if (problem != null && firstProblem == null) firstProblem = problem;
+            if (snapshot == null) {
+                // one connected VPS keeps the placeholders of the resource panel until the first reading arrives
+                body.setVisibility(connected && !several ? View.VISIBLE : View.GONE);
+                if (several || !connected) {
+                    state.setVisibility(View.VISIBLE);
+                    state.setText(connected ? getString(R.string.terminal_loading)
+                        : getString(R.string.vps_not_connected, profile.host(id).isEmpty() ? "—" : profile.host(id)));
+                }
+                if (!connected) {
+                    connect.setVisibility(View.VISIBLE);
+                    connect.setOnClickListener(view -> startActivity(new Intent(this, MainActivity.class)
+                        .putExtra(MainActivity.EXTRA_VPS, id)));
+                }
+            } else {
+                boolean available = !preview ? connected && problem == null : true;
+                if (several && (!connected || problem != null)) {
+                    state.setVisibility(View.VISIBLE);
+                    state.setText(!connected ? getString(R.string.vps_connection_lost) : problem);
+                    if (!connected) {
+                        connect.setVisibility(View.VISIBLE);
+                        connect.setOnClickListener(view -> startActivity(new Intent(this, MainActivity.class)
+                            .putExtra(MainActivity.EXTRA_VPS, id)));
+                    }
+                }
+                fillSection(section, snapshot, available, several);
+            }
+            sections.addView(section);
+        }
+        if (!preview) {
+            if (firstProblem != null) status.setText(firstProblem);
+            else status.setText((hosts.length() == 0 ? getString(R.string.status_not_connected) : hosts + " · SSH")
+                + (hosts.length() == 0 ? "" : " · " + new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date())));
+        }
     }
 
-    private void renderSnapshot(VpsSnapshot snapshot, boolean available) {
+    private void fillSection(View section, VpsSnapshot snapshot, boolean available, boolean several) {
         unavailable = !available;
         vpsRamTotal = snapshot.ramTotal;
-        status.setText(RemoteSsh.host() + " · SSH · "
-            + new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date()));
-        ((TextView) findViewById(R.id.cpu_value)).setText("CPU  " + percent(snapshot.cpuPercent));
-        ((TextView) findViewById(R.id.ram_value)).setText("RAM  " + percent(snapshot.ramPercent));
-        ((TextView) findViewById(R.id.disk_value)).setText("Диск  " + percent(snapshot.diskPercent));
-        ((ProgressBar) findViewById(R.id.cpu_bar)).setProgress(
+        ((TextView) section.findViewById(R.id.cpu_value)).setText("CPU  " + percent(snapshot.cpuPercent));
+        ((TextView) section.findViewById(R.id.ram_value)).setText("RAM  " + percent(snapshot.ramPercent));
+        ((TextView) section.findViewById(R.id.disk_value)).setText("Диск  " + percent(snapshot.diskPercent));
+        ((ProgressBar) section.findViewById(R.id.cpu_bar)).setProgress(
             Double.isNaN(snapshot.cpuPercent) ? 0 : (int) Math.round(snapshot.cpuPercent));
-        ((ProgressBar) findViewById(R.id.ram_bar)).setProgress(
+        ((ProgressBar) section.findViewById(R.id.ram_bar)).setProgress(
             Double.isNaN(snapshot.ramPercent) ? 0 : (int) Math.round(snapshot.ramPercent));
-        ((ProgressBar) findViewById(R.id.disk_bar)).setProgress(
+        ((ProgressBar) section.findViewById(R.id.disk_bar)).setProgress(
             Double.isNaN(snapshot.diskPercent) ? 0 : (int) Math.round(snapshot.diskPercent));
-        ((TextView) findViewById(R.id.cpu_total)).setText(snapshot.cores > 0 ? coresText(snapshot.cores) : "");
-        ((TextView) findViewById(R.id.ram_total)).setText(snapshot.ramTotal > 0 ? gigabytes(snapshot.ramTotal) : "");
-        ((TextView) findViewById(R.id.disk_total)).setText(snapshot.diskTotal > 0 ? gigabytes(snapshot.diskTotal) : "");
+        ((TextView) section.findViewById(R.id.cpu_total)).setText(snapshot.cores > 0 ? coresText(snapshot.cores) : "");
+        ((TextView) section.findViewById(R.id.ram_total)).setText(snapshot.ramTotal > 0 ? gigabytes(snapshot.ramTotal) : "");
+        ((TextView) section.findViewById(R.id.disk_total)).setText(snapshot.diskTotal > 0 ? gigabytes(snapshot.diskTotal) : "");
+        LinearLayout terminalList = section.findViewById(R.id.terminal_list);
         terminalList.removeAllViews();
         if (snapshot.terminals.isEmpty()) {
-            TextView empty = label(getString(R.string.terminal_empty), 14,
-                R.color.text_secondary);
+            TextView empty = label(getString(R.string.terminal_empty), 14, R.color.text_secondary);
             terminalList.addView(empty);
             return;
         }
         for (VpsSnapshot.Terminal terminal : snapshot.terminals) {
-            if (available && RemoteSsh.isConnected()) AlertCenter.ensureStream(this, terminal.name);
+            if (available && RemoteSsh.isConnected(terminal.vpsId)) AlertCenter.ensureStream(this, terminal.key());
             terminalList.addView(card(terminal));
         }
     }
@@ -214,7 +292,7 @@ public final class TerminalsActivity extends Activity {
         headerParams.topMargin = dp(6);
         card.addView(header, headerParams);
         Stats value;
-        synchronized (stats) { value = stats.get(terminal.name); }
+        synchronized (stats) { value = stats.get(terminal.key()); }
         String mode = DayProfit.mode(this);
         header.addView(statZone(value == null ? "—" : String.valueOf(value.open),
             "открытых позиций", R.color.text_primary, 1, terminal),
@@ -249,7 +327,7 @@ public final class TerminalsActivity extends Activity {
         actions.addView(restart, restartParams);
         restart.setOnClickListener(view -> confirmRestart(terminal));
         boolean canRestart = !preview && !unavailable
-            && !restartingServices.contains(terminal.service);
+            && !restartingServices.contains(terminal.vpsId + ":" + terminal.service);
         restart.setEnabled(canRestart);
         if (!canRestart) restart.setAlpha(0.45f);
 
@@ -257,7 +335,7 @@ public final class TerminalsActivity extends Activity {
         int stateColor = R.color.text_secondary;
         if (unavailable) {
             state = getString(R.string.terminal_state_inactive);
-        } else if (restartingServices.contains(terminal.service)) {
+        } else if (restartingServices.contains(terminal.vpsId + ":" + terminal.service)) {
             state = getString(R.string.terminal_state_restarting);
             stateColor = R.color.orange;
         } else if ("active".equals(terminal.state)) {
@@ -300,8 +378,10 @@ public final class TerminalsActivity extends Activity {
     private void openRobots(VpsSnapshot.Terminal terminal, String startPage, int journalTab) {
         if (preview) return;
         Intent intent = new Intent(this, RobotsActivity.class);
-        intent.putExtra("terminal_name", terminal.name);
-        intent.putExtra("terminal_title", terminal.shownName());
+        intent.putExtra("terminal_name", terminal.key());
+        // with several VPS the title tells which VPS the terminal is on
+        intent.putExtra("terminal_title", configuredVps().size() > 1
+            ? profile.name(terminal.vpsId) + " · " + terminal.shownName() : terminal.shownName());
         if (startPage != null) {
             intent.putExtra("start_page", startPage);
             intent.putExtra("journal_tab", journalTab);
@@ -351,19 +431,20 @@ public final class TerminalsActivity extends Activity {
             .setTitle(R.string.restart_confirm_title)
             .setMessage(getString(R.string.restart_confirm_message, terminal.shownName()))
             .setNegativeButton(R.string.cancel, null)
-            .setPositiveButton(R.string.restart, (dialog, which) -> restart(terminal.service))
+            .setPositiveButton(R.string.restart, (dialog, which) -> restart(terminal.vpsId, terminal.service))
             .show();
     }
 
-    private void restart(String service) {
+    private void restart(String vpsId, String service) {
         if (!service.matches("osengine(?:-[a-z0-9-]+)?")) return;
-        restartingServices.add(service);
-        if (lastSnapshot != null) showSnapshot(lastSnapshot);
+        String restartKey = vpsId + ":" + service;
+        restartingServices.add(restartKey);
+        if (!lastSnapshots.isEmpty()) renderAll();
         status.setText(R.string.terminal_restarting);
         worker.execute(() -> {
             String message;
             try {
-                RemoteSsh.run("systemctl restart " + service);
+                RemoteSsh.run(vpsId, "systemctl restart " + service);
                 message = getString(R.string.terminal_restart_started);
             } catch (IOException e) {
                 message = getString(R.string.terminal_restart_failed, e.getMessage());
@@ -371,7 +452,7 @@ public final class TerminalsActivity extends Activity {
             String finalMessage = message;
             runOnUiThread(() -> {
                 if (isDestroyed()) return;
-                restartingServices.remove(service);
+                restartingServices.remove(restartKey);
                 Toast.makeText(this, finalMessage, Toast.LENGTH_LONG).show();
                 if (visible) handler.post(refresh);
             });

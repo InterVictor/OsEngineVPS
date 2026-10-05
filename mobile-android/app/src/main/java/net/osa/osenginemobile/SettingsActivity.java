@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.widget.CheckBox;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
@@ -43,6 +44,9 @@ public final class SettingsActivity extends Activity {
     private TextView applyButton;
     private ProgressBar progress;
     private ProfileStore profile;
+    /** the VPS the update section works with (a signed release is installed per VPS) */
+    private String updateVps = TerminalKey.FIRST_VPS;
+    private LinearLayout vpsList;
     private McpBridge bridge;
     private ServerRelease release;
     private boolean visible;
@@ -70,12 +74,13 @@ public final class SettingsActivity extends Activity {
         applyButton.setOnClickListener(view -> confirmApply());
         setApplyEnabled(false);
 
-        TextView connection = findViewById(R.id.connection_info);
-        connection.setText(getString(R.string.connection_info,
-            RemoteSsh.host() == null ? "—" : RemoteSsh.host()));
-        CheckBox autoConnect = findViewById(R.id.auto_connect_setting);
-        autoConnect.setChecked(profile.autoConnect());
-        autoConnect.setOnCheckedChangeListener((button, checked) -> profile.setAutoConnect(checked));
+        vpsList = findViewById(R.id.vps_list);
+        findViewById(R.id.vps_add).setOnClickListener(view -> askNewVps());
+        // the update works with the first connected VPS until the user picks another
+        for (String id : profile.ids()) if (RemoteSsh.isConnected(id)) { updateVps = id; break; }
+        TextView pick = findViewById(R.id.update_vps);
+        pick.setOnClickListener(view -> pickUpdateVps());
+        renderVpsList();
         ((TextView) findViewById(R.id.about_info)).setText(aboutText());
         android.widget.RadioGroup profitGroup = findViewById(R.id.day_profit_group);
         String profitMode = DayProfit.mode(this);
@@ -93,6 +98,7 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        renderVpsList();
         visible = true;
         if (!preview && !updating && !busy) startWatching();
     }
@@ -110,9 +116,151 @@ public final class SettingsActivity extends Activity {
         super.onDestroy();
     }
 
+    // ---- the VPS of this phone ----
+
+    private void renderVpsList() {
+        vpsList.removeAllViews();
+        java.util.List<String> ids = profile.ids();
+        for (int i = 0; i < ids.size(); i++) {
+            String id = ids.get(i);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(-1, -2);
+            if (i > 0) rowParams.topMargin = dp(16);
+            vpsList.addView(row, rowParams);
+
+            boolean connected = RemoteSsh.isConnected(id);
+            TextView name = new TextView(this);
+            name.setText(profile.name(id));
+            name.setTextSize(17);
+            name.setTypeface(null, android.graphics.Typeface.BOLD);
+            name.setTextColor(getColor(R.color.text_primary));
+            row.addView(name);
+            TextView state = new TextView(this);
+            String host = profile.host(id);
+            state.setText((connected ? getString(R.string.vps_state_connected) : getString(R.string.vps_state_not_connected))
+                + (host.isEmpty() ? "" : " · " + host));
+            state.setTextSize(13);
+            state.setTextColor(getColor(connected ? R.color.connected : R.color.text_secondary));
+            row.addView(state);
+
+            CheckBox auto = new CheckBox(this);
+            auto.setText(R.string.vps_auto_row);
+            auto.setTextColor(getColor(R.color.text_primary));
+            auto.setTextSize(14);
+            auto.setChecked(profile.autoConnect(id));
+            auto.setOnCheckedChangeListener((button, checked) -> profile.setAutoConnect(id, checked));
+            row.addView(auto);
+
+            LinearLayout buttons = new LinearLayout(this);
+            buttons.setOrientation(LinearLayout.HORIZONTAL);
+            row.addView(buttons, new LinearLayout.LayoutParams(-1, -2));
+            buttons.addView(smallButton(getString(R.string.vps_connect_row), true, view ->
+                startActivity(new Intent(this, MainActivity.class).putExtra(MainActivity.EXTRA_VPS, id))));
+            buttons.addView(smallButton(getString(R.string.vps_rename_button), false, view -> askRename(id)));
+            if (!TerminalKey.FIRST_VPS.equals(id))
+                buttons.addView(smallButton(getString(R.string.vps_remove_button), false, view -> askRemove(id)));
+        }
+        refreshUpdateVps();
+    }
+
+    private TextView smallButton(String text, boolean accent, android.view.View.OnClickListener listener) {
+        TextView button = new TextView(this);
+        button.setText(text);
+        button.setTextSize(13);
+        button.setGravity(android.view.Gravity.CENTER);
+        button.setTextColor(getColor(accent ? R.color.orange : R.color.text_primary));
+        button.setBackgroundResource(R.drawable.restart_outline);
+        button.setPadding(dp(14), 0, dp(14), 0);
+        button.setOnClickListener(listener);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(40));
+        params.topMargin = dp(6);
+        params.rightMargin = dp(8);
+        button.setLayoutParams(params);
+        return button;
+    }
+
+    private void askNewVps() {
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint(R.string.vps_name_hint);
+        input.setSingleLine(true);
+        input.setFilters(new android.text.InputFilter[] { new android.text.InputFilter.LengthFilter(30) });
+        new android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.vps_add_title)
+            .setView(input)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                String id = profile.add(input.getText().toString());
+                renderVpsList();
+                // its address and the password for the first login are entered on the connection screen
+                startActivity(new Intent(this, MainActivity.class).putExtra(MainActivity.EXTRA_VPS, id));
+            })
+            .show();
+    }
+
+    private void askRename(String id) {
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setSingleLine(true);
+        input.setText(profile.name(id));
+        input.setFilters(new android.text.InputFilter[] { new android.text.InputFilter.LengthFilter(30) });
+        new android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.vps_rename_title)
+            .setView(input)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                String name = input.getText().toString().trim();
+                if (!name.isEmpty()) profile.rename(id, name);
+                renderVpsList();
+            })
+            .show();
+    }
+
+    private void askRemove(String id) {
+        new android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.vps_remove_title)
+            .setMessage(getString(R.string.vps_remove_message, profile.name(id)))
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.vps_remove_button, (dialog, which) -> {
+                RemoteSsh.close(id);
+                profile.remove(id);
+                if (updateVps.equals(id)) updateVps = TerminalKey.FIRST_VPS;
+                renderVpsList();
+            })
+            .show();
+    }
+
+    /** the update section names its VPS, and lets the user pick another one when there are several */
+    private void refreshUpdateVps() {
+        TextView pick = findViewById(R.id.update_vps);
+        if (profile.ids().size() < 2) { pick.setVisibility(View.GONE); return; }
+        if (!profile.ids().contains(updateVps)) updateVps = TerminalKey.FIRST_VPS;
+        pick.setVisibility(View.VISIBLE);
+        pick.setText(getString(R.string.vps_pick_for_update, profile.name(updateVps)));
+    }
+
+    private void pickUpdateVps() {
+        if (busy || updating) return;
+        java.util.List<String> ids = profile.ids();
+        String[] names = new String[ids.size()];
+        for (int i = 0; i < names.length; i++) names[i] = profile.name(ids.get(i));
+        new android.app.AlertDialog.Builder(this)
+            .setItems(names, (dialog, which) -> {
+                updateVps = ids.get(which);
+                refreshUpdateVps();
+                release = null;
+                setApplyEnabled(false);
+                check();
+            })
+            .show();
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
     // on entering: continue watching an update that is already running on the VPS, otherwise check the versions
     private void startWatching() {
-        if (!RemoteSsh.isConnected()) {
+        if (!RemoteSsh.isConnected(updateVps)) {
             showState(getString(R.string.update_no_ssh), R.color.orange);
             return;
         }
@@ -120,7 +268,7 @@ public final class SettingsActivity extends Activity {
         showBusy(true);
         worker.execute(() -> {
             boolean running = false;
-            try { running = ServerRelease.Progress.parse(RemoteSsh.run("osengine-release status")).running; }
+            try { running = ServerRelease.Progress.parse(RemoteSsh.run(updateVps, "osengine-release status")).running; }
             catch (IOException ignored) { /* the check below reports the problem */ }
             boolean finalRunning = running;
             runOnUiThread(() -> {
@@ -138,7 +286,7 @@ public final class SettingsActivity extends Activity {
 
     private void check() {
         if (busy || updating) return;
-        if (!RemoteSsh.isConnected()) {
+        if (!RemoteSsh.isConnected(updateVps)) {
             showState(getString(R.string.update_no_ssh), R.color.orange);
             return;
         }
@@ -148,7 +296,7 @@ public final class SettingsActivity extends Activity {
         worker.execute(() -> {
             ServerRelease result = null;
             String error = null;
-            try { result = ServerRelease.parse(RemoteSsh.run(CHECK_COMMAND)); }
+            try { result = ServerRelease.parse(RemoteSsh.run(updateVps, CHECK_COMMAND)); }
             catch (IOException e) { error = e.getMessage(); }
             ServerRelease finalResult = result;
             String finalError = error;
@@ -287,7 +435,7 @@ public final class SettingsActivity extends Activity {
         worker.execute(() -> {
             String error = null;
             try {
-                String out = RemoteSsh.run("osengine-release apply");
+                String out = RemoteSsh.run(updateVps, "osengine-release apply");
                 if (!out.contains("STARTED")) {
                     error = out.trim().startsWith("ERROR ") ? out.trim().substring(6) : out.trim();
                 }
@@ -325,7 +473,7 @@ public final class SettingsActivity extends Activity {
         if (!updating || isDestroyed()) return;
         worker.execute(() -> {
             ServerRelease.Progress state = null;
-            try { state = ServerRelease.Progress.parse(RemoteSsh.run("osengine-release status")); }
+            try { state = ServerRelease.Progress.parse(RemoteSsh.run(updateVps, "osengine-release status")); }
             catch (IOException ignored) { /* the phone may lose the link; the update goes on at the VPS */ }
             ServerRelease.Progress finalState = state;
             runOnUiThread(() -> {

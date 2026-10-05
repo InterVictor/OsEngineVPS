@@ -9,24 +9,26 @@ import android.util.Base64;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
+/**
+ * The VPS this phone connects to. There may be several: each has an id, a name given by the user (for example the
+ * provider's name), an address, a user, the device key (encrypted with the Android Keystore) and the auto-connect flag.
+ * The first VPS (id "1") keeps the preference names of the single-VPS versions, the others get "_<id>" appended,
+ * so nothing is migrated. The trusted host keys do not depend on the VPS id (they are kept per address).
+ */
 final class ProfileStore {
     private static final String STORE = "vps_profile";
     // Keep the alias so existing password-only profiles can be migrated once.
     private static final String KEY_ALIAS = "osengine_mobile_ssh_password";
-    private static final String PASSWORD = "ssh_password_encrypted";
-    private static final String PASSWORD_HOST = "password_host";
-    private static final String PASSWORD_USER = "password_user";
-    private static final String PRIVATE_KEY = "ssh_private_key_encrypted";
-    private static final String PRIVATE_KEY_HOST = "private_key_host";
-    private static final String PRIVATE_KEY_USER = "private_key_user";
-    private static final String PRIVATE_KEY_COMMENT = "private_key_comment";
+    private static final String IDS = "vps_ids";
 
     private final SharedPreferences prefs;
 
@@ -34,24 +36,95 @@ final class ProfileStore {
         prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE);
     }
 
-    String host() { return prefs.getString("ssh_host", ""); }
-    String user() { return prefs.getString("ssh_user", "root"); }
-    boolean autoConnect() { return prefs.getBoolean("auto_connect", false); }
-    boolean hasPrivateKey(String host, String user) {
-        return host.equals(prefs.getString(PRIVATE_KEY_HOST, ""))
-            && user.equals(prefs.getString(PRIVATE_KEY_USER, ""))
-            && prefs.contains(PRIVATE_KEY);
+    // ---- the list of VPS ----
+
+    /** ids of the VPS in the order they were added; "1" is always there */
+    List<String> ids() {
+        List<String> result = new ArrayList<>();
+        for (String id : prefs.getString(IDS, TerminalKey.FIRST_VPS).split(",")) {
+            id = id.trim();
+            if (!id.isEmpty() && id.matches("[0-9]+") && !result.contains(id)) result.add(id);
+        }
+        if (!result.contains(TerminalKey.FIRST_VPS)) result.add(0, TerminalKey.FIRST_VPS);
+        return result;
     }
 
-    void saveForm(String host, String user, boolean auto) {
-        prefs.edit().putString("ssh_host", host).putString("ssh_user", user)
-            .putBoolean("auto_connect", auto).apply();
-        if (!auto) clearPassword();
+    /** the name of a VPS: the one the user gave, else its address, else "VPS <id>" */
+    String name(String id) {
+        String name = prefs.getString("vps_name" + suffix(id), "").trim();
+        if (!name.isEmpty()) return name;
+        String host = host(id);
+        return host.isEmpty() ? "VPS " + id : host;
     }
 
-    void setAutoConnect(boolean auto) {
-        prefs.edit().putBoolean("auto_connect", auto).apply();
-        if (!auto) clearPassword();
+    void rename(String id, String name) {
+        prefs.edit().putString("vps_name" + suffix(id), name.trim()).apply();
+    }
+
+    /** makes a new, empty VPS and returns its id */
+    String add(String name) {
+        int next = 1;
+        for (String id : ids()) next = Math.max(next, Integer.parseInt(id) + 1);
+        String id = String.valueOf(next);
+        List<String> all = ids();
+        all.add(id);
+        prefs.edit().putString(IDS, join(all)).putString("vps_name" + suffix(id), name.trim())
+            .putString("ssh_user" + suffix(id), "root").commit();
+        return id;
+    }
+
+    /** forgets a VPS (its address, user, key and name); the first VPS cannot be removed, only emptied */
+    void remove(String id) {
+        if (TerminalKey.FIRST_VPS.equals(id)) return;
+        List<String> all = ids();
+        all.remove(id);
+        String s = suffix(id);
+        prefs.edit().putString(IDS, join(all)).remove("vps_name" + s).remove("ssh_host" + s)
+            .remove("ssh_user" + s).remove("auto_connect" + s).remove("ssh_private_key_encrypted" + s)
+            .remove("private_key_host" + s).remove("private_key_user" + s).remove("private_key_comment" + s)
+            .remove("ssh_password_encrypted" + s).remove("password_host" + s).remove("password_user" + s)
+            .commit();
+    }
+
+    private static String join(List<String> values) {
+        StringBuilder text = new StringBuilder();
+        for (String value : values) { if (text.length() > 0) text.append(','); text.append(value); }
+        return text.toString();
+    }
+
+    private static String suffix(String id) {
+        return TerminalKey.FIRST_VPS.equals(id) ? "" : "_" + id;
+    }
+
+    // ---- one VPS ----
+
+    String host() { return host(TerminalKey.FIRST_VPS); }
+    String host(String id) { return prefs.getString("ssh_host" + suffix(id), ""); }
+    String user() { return user(TerminalKey.FIRST_VPS); }
+    String user(String id) { return prefs.getString("ssh_user" + suffix(id), "root"); }
+    boolean autoConnect() { return autoConnect(TerminalKey.FIRST_VPS); }
+    boolean autoConnect(String id) { return prefs.getBoolean("auto_connect" + suffix(id), false); }
+
+    boolean hasPrivateKey(String host, String user) { return hasPrivateKey(TerminalKey.FIRST_VPS, host, user); }
+    boolean hasPrivateKey(String id, String host, String user) {
+        String s = suffix(id);
+        return host.equals(prefs.getString("private_key_host" + s, ""))
+            && user.equals(prefs.getString("private_key_user" + s, ""))
+            && prefs.contains("ssh_private_key_encrypted" + s);
+    }
+
+    void saveForm(String host, String user, boolean auto) { saveForm(TerminalKey.FIRST_VPS, host, user, auto); }
+    void saveForm(String id, String host, String user, boolean auto) {
+        String s = suffix(id);
+        prefs.edit().putString("ssh_host" + s, host).putString("ssh_user" + s, user)
+            .putBoolean("auto_connect" + s, auto).apply();
+        if (!auto) clearPassword(id);
+    }
+
+    void setAutoConnect(boolean auto) { setAutoConnect(TerminalKey.FIRST_VPS, auto); }
+    void setAutoConnect(String id, boolean auto) {
+        prefs.edit().putBoolean("auto_connect" + suffix(id), auto).apply();
+        if (!auto) clearPassword(id);
     }
 
     String knownHost(String host, int port) {
@@ -69,29 +142,38 @@ final class ProfileStore {
     }
 
     void savePrivateKey(String host, String user, String privateKey, String comment) throws Exception {
+        savePrivateKey(TerminalKey.FIRST_VPS, host, user, privateKey, comment);
+    }
+
+    void savePrivateKey(String id, String host, String user, String privateKey, String comment) throws Exception {
+        String s = suffix(id);
         String encrypted = encrypt(privateKey);
-        if (!prefs.edit().putString(PRIVATE_KEY, encrypted)
-            .putString(PRIVATE_KEY_HOST, host).putString(PRIVATE_KEY_USER, user)
-            .putString(PRIVATE_KEY_COMMENT, comment)
-            .remove(PASSWORD).remove(PASSWORD_HOST).remove(PASSWORD_USER).commit())
+        if (!prefs.edit().putString("ssh_private_key_encrypted" + s, encrypted)
+            .putString("private_key_host" + s, host).putString("private_key_user" + s, user)
+            .putString("private_key_comment" + s, comment)
+            .remove("ssh_password_encrypted" + s).remove("password_host" + s).remove("password_user" + s).commit())
             throw new IllegalStateException("Не удалось сохранить SSH-ключ устройства");
     }
 
-    String loadPrivateKey(String host, String user) {
-        if (!host.equals(prefs.getString(PRIVATE_KEY_HOST, ""))
-            || !user.equals(prefs.getString(PRIVATE_KEY_USER, ""))) return null;
-        String stored = prefs.getString(PRIVATE_KEY, null);
+    String loadPrivateKey(String host, String user) { return loadPrivateKey(TerminalKey.FIRST_VPS, host, user); }
+    String loadPrivateKey(String id, String host, String user) {
+        String s = suffix(id);
+        if (!host.equals(prefs.getString("private_key_host" + s, ""))
+            || !user.equals(prefs.getString("private_key_user" + s, ""))) return null;
+        String stored = prefs.getString("ssh_private_key_encrypted" + s, null);
         if (stored == null) return null;
         try { return decrypt(stored); }
         catch (Exception e) {
-            clearPrivateKey();
+            clearPrivateKey(id);
             return null;
         }
     }
 
-    void clearPrivateKey() {
-        prefs.edit().remove(PRIVATE_KEY).remove(PRIVATE_KEY_HOST)
-            .remove(PRIVATE_KEY_USER).remove(PRIVATE_KEY_COMMENT).commit();
+    void clearPrivateKey() { clearPrivateKey(TerminalKey.FIRST_VPS); }
+    void clearPrivateKey(String id) {
+        String s = suffix(id);
+        prefs.edit().remove("ssh_private_key_encrypted" + s).remove("private_key_host" + s)
+            .remove("private_key_user" + s).remove("private_key_comment" + s).commit();
     }
 
     private String encrypt(String value) throws Exception {
@@ -106,14 +188,16 @@ final class ProfileStore {
         return result;
     }
 
-    String loadPassword(String host, String user) {
-        if (!host.equals(prefs.getString(PASSWORD_HOST, ""))
-            || !user.equals(prefs.getString(PASSWORD_USER, ""))) return null;
-        String stored = prefs.getString(PASSWORD, null);
+    String loadPassword(String host, String user) { return loadPassword(TerminalKey.FIRST_VPS, host, user); }
+    String loadPassword(String id, String host, String user) {
+        String s = suffix(id);
+        if (!host.equals(prefs.getString("password_host" + s, ""))
+            || !user.equals(prefs.getString("password_user" + s, ""))) return null;
+        String stored = prefs.getString("ssh_password_encrypted" + s, null);
         if (stored == null) return null;
         try { return decrypt(stored); }
         catch (Exception e) {
-            clearPassword();
+            clearPassword(id);
             return null;
         }
     }
@@ -130,8 +214,11 @@ final class ProfileStore {
         } finally { Arrays.fill(payload, (byte) 0); }
     }
 
-    void clearPassword() {
-        prefs.edit().remove(PASSWORD).remove(PASSWORD_HOST).remove(PASSWORD_USER).commit();
+    void clearPassword() { clearPassword(TerminalKey.FIRST_VPS); }
+    void clearPassword(String id) {
+        String s = suffix(id);
+        prefs.edit().remove("ssh_password_encrypted" + s).remove("password_host" + s)
+            .remove("password_user" + s).commit();
     }
 
     private SecretKey key() throws Exception {
