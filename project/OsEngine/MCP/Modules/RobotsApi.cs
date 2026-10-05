@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Your rights to use code governed by this license https://github.com/AlexWan/OsEngine/blob/master/LICENSE
  * Ваши права на использование кода регулируются данной лицензией http://o-s-a.net/doc/license_simple_engine.pdf
 */
@@ -151,6 +151,14 @@ namespace OsEngine.MCP.Modules
 
                     case "bot_screener_get_tabs":
                         response.Result = GetScreenerTabs(request.Params);
+                        break;
+
+                    case "bot_screener_get_margin_policy":
+                        response.Result = GetScreenerMarginPolicy(request.Params);
+                        break;
+
+                    case "bot_screener_set_margin_policy":
+                        response.Result = SetScreenerMarginPolicy(request.Params);
                         break;
 
                     case "bot_screener_set_tab_state":
@@ -700,6 +708,39 @@ namespace OsEngine.MCP.Modules
                             is_on = new { type = "boolean" }
                         },
                         required = new[] { "bot_id", "tab_name", "child_tab_name", "is_on" }
+                    }
+                },
+                new McpTool
+                {
+                    Name = "bot_screener_get_margin_policy",
+                    Description = "Read the margin policy of a screener: the margin mode and leverage that every NEW security of the screener gets on the exchange (set automatically once a minute through the connector; the connector's block switch is respected). The policy is stored by the terminal, it does not write to the exchange by itself when read",
+                    InputSchema = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            bot_id = new { type = "string", description = "Robot number or unique name" },
+                            tab_name = new { type = "string", description = "Screener tab name from bot_get_sources" }
+                        },
+                        required = new[] { "bot_id", "tab_name" }
+                    }
+                },
+                new McpTool
+                {
+                    Name = "bot_screener_set_margin_policy",
+                    Description = "Switch on/off and configure the margin policy of a screener. Changes only the policy (nothing is sent to the exchange now): later, each security that gets into the screener is set to margin_mode and leverage by the terminal. When the policy is switched on, the securities that are in the screener now are left alone (use server_instance_set_margin_info for them)",
+                    InputSchema = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            bot_id = new { type = "string", description = "Robot number or unique name" },
+                            tab_name = new { type = "string", description = "Screener tab name from bot_get_sources" },
+                            enabled = new { type = "boolean" },
+                            margin_mode = new { type = "string", description = "Isolated or Cross (default Cross)" },
+                            leverage = new { type = "integer", description = "Whole number, 1 or more (default 3)" }
+                        },
+                        required = new[] { "bot_id", "tab_name", "enabled" }
                     }
                 },
                 new McpTool
@@ -3123,6 +3164,67 @@ namespace OsEngine.MCP.Modules
             }
 
             return null;
+        }
+
+        private static object MarginPolicyAnswer(ScreenerMarginPolicy.PolicyItem item)
+        {
+            return new
+            {
+                bot_id = item.BotId,
+                tab_name = item.TabName,
+                enabled = item.Enabled,
+                margin_mode = item.Isolated ? "Isolated" : "Cross",
+                leverage = item.Leverage,
+                known_securities = item.Known.Count,
+                status = item.Status
+            };
+        }
+
+        private object GetScreenerMarginPolicy(JsonElement parameters)
+        {
+            BotPanel bot = FindBot(GetMasterRequired(), parameters.GetProperty("bot_id"));
+            BotTabScreener screener = FindBotTabScreener(bot, GetRequiredString(parameters, "tab_name"));
+
+            return MarginPolicyAnswer(ScreenerMarginPolicy.Get(bot.NameStrategyUniq, screener.TabName));
+        }
+
+        private object SetScreenerMarginPolicy(JsonElement parameters)
+        {
+            BotPanel bot = FindBot(GetMasterRequired(), parameters.GetProperty("bot_id"));
+            BotTabScreener screener = FindBotTabScreener(bot, GetRequiredString(parameters, "tab_name"));
+
+            if (!parameters.TryGetProperty("enabled", out JsonElement enabledElement)
+                || (enabledElement.ValueKind != JsonValueKind.True && enabledElement.ValueKind != JsonValueKind.False))
+            {
+                throw new ArgumentException("enabled is required (true or false)");
+            }
+
+            string mode = parameters.TryGetProperty("margin_mode", out JsonElement modeElement) && modeElement.ValueKind == JsonValueKind.String
+                ? modeElement.GetString() : "Cross";
+            bool isolated;
+
+            if (string.Equals(mode, "Isolated", StringComparison.OrdinalIgnoreCase))
+            {
+                isolated = true;
+            }
+            else if (string.Equals(mode, "Cross", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(mode, "Crossed", StringComparison.OrdinalIgnoreCase))
+            {
+                isolated = false;
+            }
+            else
+            {
+                throw new ArgumentException("margin_mode must be Isolated or Cross");
+            }
+
+            int leverage = parameters.TryGetProperty("leverage", out JsonElement leverageElement) && leverageElement.ValueKind == JsonValueKind.Number
+                ? leverageElement.GetInt32() : 3;
+
+            List<string> current = (screener.Tabs ?? new List<BotTabSimple>()).ToList()
+                .Select(t => t?.Connector?.SecurityName).Where(n => !string.IsNullOrEmpty(n)).ToList();
+
+            return MarginPolicyAnswer(ScreenerMarginPolicy.Set(bot.NameStrategyUniq, screener.TabName,
+                enabledElement.ValueKind == JsonValueKind.True, isolated, leverage, false, current));
         }
 
         private object GetScreenerTabs(JsonElement parameters)

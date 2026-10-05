@@ -169,6 +169,7 @@ namespace OsEngine.MCP
             _testerApi.NewLogMessageEvent += TesterApi_NewLogMessageEvent;
 
             _robotsApi = new RobotsApi(publishEvent);
+            ScreenerMarginPolicy.Start();
             _robotsApi.NewLogMessageEvent += RobotsApi_NewLogMessageEvent;
 
             _systemLoadApi = new SystemLoadApi();
@@ -1524,6 +1525,8 @@ namespace OsEngine.MCP
                     case "bot_set_config_tab_screener":
                     case "bot_screener_get_tabs":
                     case "bot_screener_set_tab_state":
+                    case "bot_screener_get_margin_policy":
+                    case "bot_screener_set_margin_policy":
                         response = _robotsApi.Handle(request);
                         break;
 

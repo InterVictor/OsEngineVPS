@@ -29,6 +29,12 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
         private readonly DispatcherTimer _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
         private bool _busy;
 
+        // the screener policy: the same mode and leverage for every security that gets into the screener later
+        private Func<(string BotId, string TabName)?> _policyTarget;
+        private bool _policyLoaded;
+        private bool _policyLoading;
+        private readonly DispatcherTimer _policySaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(900) };
+
         public RobotsVpsMarginSettings()
         {
             InitializeComponent();
@@ -37,6 +43,119 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             ComboBoxMode.SelectedItem = "Cross";
             ButtonApply.Click += ButtonApply_Click;
             _refreshTimer.Tick += async (s, e) => { _refreshTimer.Stop(); await RefreshStateAsync(); };
+
+            CheckBoxPolicy.Click += async (s, e) => await CheckBoxPolicy_ClickAsync();
+            _policySaveTimer.Tick += async (s, e) => { _policySaveTimer.Stop(); await SavePolicyAsync(); };
+            ComboBoxMode.SelectionChanged += (s, e) => SchedulePolicySave();
+            TextBoxLeverage.TextChanged += (s, e) => SchedulePolicySave();
+        }
+
+        // only the screener window calls it: it adds the check box of the policy under the fields
+        public void InitPolicy(Func<(string BotId, string TabName)?> target)
+        {
+            _policyTarget = target;
+            CheckBoxPolicy.Visibility = Visibility.Visible;
+            TextBlockPolicy.Visibility = Visibility.Visible;
+            TextBlockState.Margin = new Thickness(10, 124, 10, 0);
+            Height = 156;
+        }
+
+        private void SchedulePolicySave()
+        {
+            if (_policyTarget == null || _policyLoading || CheckBoxPolicy.IsChecked != true)
+            {
+                return;
+            }
+
+            _policySaveTimer.Stop();
+            _policySaveTimer.Start();
+        }
+
+        private async Task LoadPolicyAsync()
+        {
+            (string BotId, string TabName)? target = _policyTarget?.Invoke();
+
+            if (target == null || _client == null || !_client.IsConnected)
+            {
+                return;
+            }
+
+            try
+            {
+                JsonElement answer = await _client.CallToolAsync("bot_screener_get_margin_policy", new { bot_id = target.Value.BotId, tab_name = target.Value.TabName });
+                _policyLoading = true;
+                bool enabled = answer.TryGetProperty("enabled", out JsonElement en) && en.ValueKind == JsonValueKind.True;
+                CheckBoxPolicy.IsChecked = enabled;
+
+                if (enabled)
+                {
+                    string mode = answer.TryGetProperty("margin_mode", out JsonElement m) ? m.GetString() : "Cross";
+                    ComboBoxMode.SelectedItem = mode == "Isolated" ? "Isolated" : "Cross";
+                    TextBoxLeverage.Text = answer.TryGetProperty("leverage", out JsonElement l) && l.TryGetInt32(out int lev) ? lev.ToString() : "3";
+                }
+
+                TextBlockPolicy.Text = answer.TryGetProperty("status", out JsonElement st) ? st.GetString() : string.Empty;
+                _policyLoading = false;
+                _policyLoaded = true;
+            }
+            catch (Exception ex)
+            {
+                _policyLoading = false;
+                _policyLoaded = true;
+                TextBlockPolicy.Text = "The policy is not available: " + ex.Message;
+            }
+        }
+
+        private async Task CheckBoxPolicy_ClickAsync()
+        {
+            if (CheckBoxPolicy.IsChecked == true)
+            {
+                string mode = ComboBoxMode.SelectedItem as string;
+
+                if (mode == null || !int.TryParse(TextBoxLeverage.Text.Trim(), out int leverage) || leverage < 1)
+                {
+                    CheckBoxPolicy.IsChecked = false;
+                    System.Windows.MessageBox.Show("Choose Isolated or Cross and enter the leverage as a whole number, 1 or more.", "VPS", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                string question = "From now on every NEW security that gets into this screener will be set on the exchange to " + mode + ", leverage " + leverage + "x, "
+                    + "automatically (checked once a minute).\n\nThe securities that are in the screener now are not touched (use the button for them). "
+                    + "The settings belong to the exchange account. If the server blocks margin changes, nothing is sent.\n\nSwitch the policy on?";
+
+                if (System.Windows.MessageBox.Show(question, "VPS", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                {
+                    CheckBoxPolicy.IsChecked = false;
+                    return;
+                }
+            }
+
+            await SavePolicyAsync();
+        }
+
+        private async Task SavePolicyAsync()
+        {
+            (string BotId, string TabName)? target = _policyTarget?.Invoke();
+
+            if (target == null || _client == null || !_client.IsConnected)
+            {
+                return;
+            }
+
+            string modeText = ComboBoxMode.SelectedItem as string ?? "Cross";
+            int leverage = int.TryParse(TextBoxLeverage.Text.Trim(), out int value) && value >= 1 ? value : 3;
+
+            try
+            {
+                JsonElement answer = await _client.CallToolAsync("bot_screener_set_margin_policy",
+                    new { bot_id = target.Value.BotId, tab_name = target.Value.TabName, enabled = CheckBoxPolicy.IsChecked == true, margin_mode = modeText, leverage });
+                TextBlockPolicy.Text = answer.TryGetProperty("status", out JsonElement st) ? st.GetString() : string.Empty;
+            }
+            catch (Exception ex)
+            {
+                TextBlockPolicy.Text = "The policy was not saved: " + ex.Message;
+                System.Windows.MessageBox.Show("The policy was not saved: " + ex.Message, "VPS", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         public void Init(RemoteMcpClient client, Func<(string Type, int Number)?> serverProvider, Func<List<string>> securitiesProvider)
@@ -58,6 +177,11 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             if (_busy || _client == null || !_client.IsConnected)
             {
                 return;
+            }
+
+            if (_policyTarget != null && !_policyLoaded)
+            {
+                await LoadPolicyAsync();
             }
 
             (string Type, int Number)? server = _serverProvider?.Invoke();

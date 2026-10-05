@@ -45,6 +45,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             MarginSettings.Init(_client,
                 () => { RemoteServer server = FindSelectedServer(); return server == null ? ((string, int)?)null : (server.Type, server.Number); },
                 () => _selected.Values.Select(v => v.Name).Distinct().ToList());
+            MarginSettings.InitPolicy(() => (_botId, _tabName));
 
             CreateSecurityGrid();
             ComboBoxTypeServer.SelectionChanged += (s, e) => { MarginSettings.ScheduleRefresh(); if (!_loading) _ = LoadSelectedServerDataAsync(); };

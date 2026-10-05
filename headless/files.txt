@@ -288,6 +288,7 @@ MCP/Modules/McpProtocolApi.cs
 MCP/Modules/OptimizerApi.cs
 MCP/Modules/OsDataApi.cs
 MCP/Modules/ProxyApi.cs
+MCP/Modules/ScreenerMarginPolicy.cs
 MCP/Modules/RobotsApi.cs
 MCP/Modules/ServerInstanceApi.cs
 MCP/Modules/ServerManagementApi.cs
