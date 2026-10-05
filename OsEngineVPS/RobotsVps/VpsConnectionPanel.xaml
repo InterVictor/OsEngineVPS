@@ -139,6 +139,8 @@
                         <Button Name="ButtonTerminalRestart" Content="Restart" Height="24" Margin="0,2,2,0" Click="ButtonTerminalRestart_Click"/>
                         <Button Name="ButtonTerminalRemove" Content="Remove" Height="24" Margin="2,2,0,0" Click="ButtonTerminalRemove_Click"/>
                     </UniformGrid>
+                    <Button Name="ButtonTerminalMigrate" Content="Migrate to another VPS..." Height="24" Margin="0,4,0,0" Click="ButtonTerminalMigrate_Click"
+                            ToolTip="Moves the selected terminal with all its data to another VPS of the list (the source is stopped and its autostart switched off)"/>
                     <Button Name="ButtonTerminalRename" Content="Rename..." Height="24" Margin="0,4,0,0" Click="ButtonTerminalRename_Click"
                             ToolTip="Change the name shown for the terminal (only the shown name; the service, the folder and the connection of AI agents keep their names)"/>
                 </StackPanel>

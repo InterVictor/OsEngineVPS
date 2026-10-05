@@ -141,6 +141,17 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
         private static string Fingerprint(IReadOnlyList<VpsInstance> instances) => string.Join("|", instances.Select(i => i.Name + "=" + i.Title));
 
+        /// <summary>the SSH access and the terminals of a VPS by its id; null if the VPS is not connected over SSH of this program</summary>
+        internal static (VpsSshCredentials Ssh, Func<string, System.Threading.Tasks.Task<string>> Run, IReadOnlyList<VpsInstance> Instances)? SshOfVps(string vpsId)
+        {
+            lock (Locker)
+            {
+                return Vps.TryGetValue(vpsId, out VpsEntry entry) && entry.Ssh != null && entry.Run != null
+                    ? (entry.Ssh, entry.Run, entry.Instances)
+                    : ((VpsSshCredentials, Func<string, System.Threading.Tasks.Task<string>>, IReadOnlyList<VpsInstance>)?)null;
+            }
+        }
+
         internal static VpsSshCredentials SshCredentialsFor(string key) => EntryOf(key)?.Ssh;
         internal static Func<string, System.Threading.Tasks.Task<string>> SshRunFor(string key) => EntryOf(key)?.Run;
         internal static IReadOnlyList<VpsInstance> InstancesFor(string key) => EntryOf(key)?.Instances ?? new List<VpsInstance>();

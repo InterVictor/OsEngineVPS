@@ -829,6 +829,70 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             }).ConfigureAwait(true);
         }
 
+        // Migration of the selected terminal to another VPS of the list; the steps and their safety rules are in VpsMigration
+        private async void ButtonTerminalMigrate_Click(object sender, RoutedEventArgs e)
+        {
+            if (!EnsureSshCommands()) return;
+
+            VpsInstance instance = SelectedInstance();
+            if (instance == null) return;
+
+            string sourceKey = VpsRemoteSession.Key(_profileId, instance.Name);
+            RobotsVpsMigrateDialog dialog = new RobotsVpsMigrateDialog(sourceKey) { Owner = Window.GetWindow(this) };
+            if (dialog.ShowDialog() != true) return;
+
+            MigrationPlan plan = new MigrationPlan { SourceKey = sourceKey, TargetVpsId = dialog.TargetVpsId, TargetName = dialog.TargetName };
+            string sourceVps = VpsProfiles.NameOf(_profileId);
+            string targetVps = VpsProfiles.NameOf(plan.TargetVpsId);
+
+            // the open positions stay on the exchange; the robots do not manage them while the terminal is being moved
+            RemoteMcpClient client = instance.IsActive ? VpsRemoteSession.GetClient(sourceKey) : null;
+            List<string> positions = client == null ? null : await VpsMigration.OpenPositionsAsync(client).ConfigureAwait(true);
+
+            AcceptDialogUi confirm = new AcceptDialogUi(
+                $"Migrate terminal \"{instance.Title}\" from VPS \"{sourceVps}\" to VPS \"{targetVps}\" as \"{plan.TargetName}\"?\n\n"
+                + (instance.IsActive ? "The source terminal is stopped for the move and stays stopped with its autostart OFF (its data is kept). " : "The source terminal is not running. ")
+                + "The new terminal starts with all the data. This usually takes a few minutes.");
+            confirm.ShowDialog();
+            if (!confirm.UserAcceptAction) return;
+
+            if (instance.IsActive && (positions == null || positions.Count > 0))
+            {
+                string text = positions == null
+                    ? "The open positions of this terminal could not be read."
+                    : $"The terminal has {positions.Count} open position(s):\n  " + string.Join("\n  ", positions.Take(12)) + (positions.Count > 12 ? "\n  ..." : "");
+
+                AcceptDialogUi second = new AcceptDialogUi(
+                    text + "\n\nThe positions stay on the exchange, but while the terminal is moved (usually 2–5 minutes) its robots do NOT manage them: "
+                    + "no exits, no stops. Migrate anyway?");
+                second.ShowDialog();
+                if (!second.UserAcceptAction) return;
+            }
+
+            PanelTerminalButtons.IsEnabled = false;
+            PanelMaintenanceButtons.IsEnabled = false;
+            AppendLog($"=== Migration of terminal \"{instance.Title}\" to VPS \"{targetVps}\" as \"{plan.TargetName}\" ===");
+
+            try
+            {
+                (MigrationOutcome outcome, string info) = await Task.Run(() => VpsMigration.RunAsync(plan, LogFromAnyThread, CancellationToken.None)).ConfigureAwait(true);
+                AppendLog((outcome == MigrationOutcome.Done ? "Migration finished: " : "Migration did not finish: ") + info);
+                MessageBox.Show(Window.GetWindow(this), info, outcome == MigrationOutcome.Done ? "Migration finished" : "Migration did not finish",
+                    MessageBoxButton.OK, outcome == MigrationOutcome.Done ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("Migration failed: " + ex.Message);
+                MessageBox.Show(Window.GetWindow(this), ex.Message, "Migration failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            finally
+            {
+                PanelTerminalButtons.IsEnabled = true;
+                PanelMaintenanceButtons.IsEnabled = true;
+                await SyncTerminalsAsync().ConfigureAwait(true);
+            }
+        }
+
         private async void ButtonTerminalRename_Click(object sender, RoutedEventArgs e)
         {
             VpsInstance instance = SelectedInstance();
