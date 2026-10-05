@@ -862,13 +862,22 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
             if (dialog.ShowDialog() != true) return;
 
-            await RunTerminalActionAsync($"Renaming terminal \"{instance.Title}\" to \"{dialog.NewName}\"", async () =>
+            string oldTitle = instance.Title;
+
+            try
             {
+                AppendLog($"Renaming terminal \"{oldTitle}\" to \"{dialog.NewName}\"...");
                 await VpsInstances.RenameAsync(_sshTunnel.RunCommandAsync, _instances, instance, dialog.NewName).ConfigureAwait(true);
-                AppendLog($"Terminal \"{instance.Title}\" is shown as \"{instance.Title}\" now");
+                AppendLog($"Terminal \"{instance.Name}\" is shown as \"{instance.Title}\" now");
                 RenderTerminals();
                 VpsRemoteSession.RaiseInstancesChanged();
-            }).ConfigureAwait(true);
+                await SyncTerminalsAsync().ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Renaming terminal \"{oldTitle}\" failed: {ex.Message}");
+                MessageBox.Show("The terminal was not renamed: " + ex.Message, "VPS", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         private async void ButtonTerminalAdd_Click(object sender, RoutedEventArgs e)
