@@ -251,6 +251,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
                     Name = profile.Name,
                     Host = string.IsNullOrEmpty(panel.Host) ? "—" : panel.Host,
                     Status = panel.StatusText,
+                    Login = panel.LoginText,
                     Terminals = panel.ConnectedTerminalCount,
                     Auto = panel.AutoConnect ? "yes" : ""
                 });
@@ -393,6 +394,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             public string Name { get; set; }
             public string Host { get; set; }
             public string Status { get; set; }
+            public string Login { get; set; }
             public int Terminals { get; set; }
             public string Auto { get; set; }
         }

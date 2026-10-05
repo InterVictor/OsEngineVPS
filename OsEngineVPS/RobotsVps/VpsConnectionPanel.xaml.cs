@@ -66,6 +66,13 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
         public bool AutoConnect => CheckBoxAutoConnectSsh.IsChecked == true;
         public bool IsConnectedToVps => IsConnected;
 
+        /// <summary>how this computer logs in to this VPS: its own registered key, a key file, or only the password (for the table of all VPS)</summary>
+        public string LoginText =>
+            _computerKey != null ? "own key registered"
+            : !string.IsNullOrWhiteSpace(TextBoxSshKeyPath.Text) ? "key file"
+            : !string.IsNullOrEmpty(PasswordBoxSshPassword.Password) ? "password only"
+            : "not set";
+
         public void ShutdownConnection()
         {
             Disconnect();

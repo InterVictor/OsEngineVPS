@@ -29,7 +29,8 @@
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="VPS" Width="160" Binding="{Binding Name}"/>
                             <DataGridTextColumn Header="Address" Width="*" Binding="{Binding Host}"/>
-                            <DataGridTextColumn Header="Connection" Width="190" Binding="{Binding Status}"/>
+                            <DataGridTextColumn Header="Connection" Width="170" Binding="{Binding Status}"/>
+                            <DataGridTextColumn Header="This computer's login" Width="140" Binding="{Binding Login}"/>
                             <DataGridTextColumn Header="Terminals" Width="80" Binding="{Binding Terminals}"/>
                             <DataGridTextColumn Header="Auto" Width="60" Binding="{Binding Auto}"/>
                         </DataGrid.Columns>
