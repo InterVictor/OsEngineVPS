@@ -46,6 +46,10 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             OsEngine.Layout.StartupLocation.Start_FitHeightToWorkArea(this);
             LocalizeControls();
 
+            MarginSettings.Init(_client,
+                () => { RemoteServer server = FindSelectedServer(); return server == null ? ((string, int)?)null : (server.Type, server.Number); },
+                () => { string name = _selectedSecurity ?? GetString(_config, "security_name"); return string.IsNullOrEmpty(name) ? new List<string>() : new List<string> { name }; });
+
             ButtonRightInSearchResults.Visibility = Visibility.Hidden;
             ButtonLeftInSearchResults.Visibility = Visibility.Hidden;
             LabelCurrentResultShow.Visibility = Visibility.Hidden;
@@ -96,6 +100,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             {
                 _config = await _client.CallToolAsync("bot_get_config_tab_simple", new { bot_id = _botId, tab_name = _tabName });
                 LoadConfigIntoControls();
+                MarginSettings.ScheduleRefresh();
                 _selectedSecurity = GetString(_config, "security_name");
                 _selectedClass = GetString(_config, "security_class");
                 await LoadRemoteServersAsync();
@@ -272,6 +277,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             if (selected == null) return;
             _selectedSecurity = selected.Name;
             _selectedClass = selected.ClassName;
+            MarginSettings.ScheduleRefresh();
             _loading = true;
             ComboBoxClass.SelectedItem = selected.ClassName;
             _loading = false;
@@ -350,6 +356,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
         private void ServerSelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            MarginSettings.ScheduleRefresh();
             if (!_loading) _ = LoadSelectedServerDataAsync();
         }
         private void ClassSelectionChanged(object sender, SelectionChangedEventArgs e)

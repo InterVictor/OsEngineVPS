@@ -42,8 +42,12 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             OsEngine.Layout.StartupLocation.Start_MouseInCentre(this);
             LocalizeControls();
 
+            MarginSettings.Init(_client,
+                () => { RemoteServer server = FindSelectedServer(); return server == null ? ((string, int)?)null : (server.Type, server.Number); },
+                () => _selected.Values.Select(v => v.Name).Distinct().ToList());
+
             CreateSecurityGrid();
-            ComboBoxTypeServer.SelectionChanged += (s, e) => { if (!_loading) _ = LoadSelectedServerDataAsync(); };
+            ComboBoxTypeServer.SelectionChanged += (s, e) => { MarginSettings.ScheduleRefresh(); if (!_loading) _ = LoadSelectedServerDataAsync(); };
             ComboBoxClass.SelectionChanged += (s, e) => { if (!_loading) RenderSecurities(); };
             TextBoxSearchSecurity.TextChanged += (s, e) => { if (!_loading) RenderSecurities(); };
             TextBoxSearchSecurity.GotKeyboardFocus += (s, e) => { if (TextBoxSearchSecurity.Text == OsLocalization.Market.Label64) TextBoxSearchSecurity.Text = string.Empty; };
@@ -308,6 +312,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
         private void UpdateSelectedCount()
         {
             LabelSelectedCount.Content = "selected: " + _selected.Count;
+            MarginSettings.ScheduleRefresh();
         }
 
         #endregion

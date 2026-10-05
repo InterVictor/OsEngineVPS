@@ -754,20 +754,47 @@ namespace OsEngine.Market.Servers.Binance.Futures
                 return null;
             }
 
-            try
+            // the settings are idempotent, so a request that the exchange refused only because of its timestamp
+            // ("outside of the recvWindow") is repeated after the clock offset to the exchange is measured again
+            for (int attempt = 1; attempt <= 3; attempt++)
             {
-                lock (_queryHttpLocker)
+                try
                 {
-                    GetRateGate().WaitToProceed();
-                    WaitIfWeightNearLimit();
-                    return PerformHttpRequest(Method.POST, endpoint, param, true);
+                    lock (_queryHttpLocker)
+                    {
+                        GetRateGate().WaitToProceed();
+                        WaitIfWeightNearLimit();
+                        error = null;
+                        return PerformHttpRequest(Method.POST, endpoint, param, true);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+
+                    if (attempt < 3 && error.Contains("recvWindow"))
+                    {
+                        SendLogMessage("Margin settings request: timestamp refused (attempt " + attempt + ", offset to the exchange "
+                            + (int)_serverTimeOffset.TotalMilliseconds + " ms), time is synchronized again", LogMessageType.System);
+
+                        try
+                        {
+                            SyncServerTime();
+                        }
+                        catch
+                        {
+                            // the next attempt shows the real reason
+                        }
+
+                        Thread.Sleep(300);
+                        continue;
+                    }
+
+                    return null;
                 }
             }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                return null;
-            }
+
+            return null;
         }
 
         private void UpdateMarginInfo(List<PositionFutures> positions)
