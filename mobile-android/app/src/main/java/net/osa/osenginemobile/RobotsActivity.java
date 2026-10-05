@@ -45,6 +45,12 @@ public final class RobotsActivity extends Activity {
     private final Runnable serversPolling = this::loadServers;
     private McpBridge bridge;
     private String terminal;
+
+    /** the name given to the terminal in OsEngineVPS, passed by the screen that opened this one; the technical name when there is none */
+    private String shownTerminalName() {
+        String title = getIntent().getStringExtra("terminal_title");
+        return title == null || title.trim().isEmpty() ? terminal : title.trim();
+    }
     private String page = "Роботы";
     private JSONArray bots = new JSONArray();
     private JSONArray servers = new JSONArray();
@@ -100,7 +106,7 @@ public final class RobotsActivity extends Activity {
         width.width = Math.min(screenWidth - dp(32), dp(tablet ? 1100 : 480));
         column.setLayoutParams(width);
         ((TextView) findViewById(R.id.robots_heading)).setText(
-            getString(R.string.robots_heading, terminal));
+            getString(R.string.robots_heading, shownTerminalName()));
         status = findViewById(R.id.robots_status);
         botList = findViewById(R.id.robots_list);
         pageContent = findViewById(R.id.page_content);

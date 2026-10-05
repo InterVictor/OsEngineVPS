@@ -18,7 +18,7 @@ final class VpsSnapshotReader {
         + "mem=$(systemctl show \"$svc\" -p MemoryCurrent --value); "
         + "cpu=$(systemctl show \"$svc\" -p CPUUsageNSec --value); "
         + "printf 'SVC|%s|%s|%s|%s\\n' \"$svc\" \"$state\" \"$mem\" \"$cpu\"; "
-        + "done; true";
+        + "done; [ -f /etc/osengine/names.conf ] && sed 's/^/NAMES|/' /etc/osengine/names.conf; true";
 
     private long previousTotal;
     private long previousIdle;
@@ -36,6 +36,15 @@ final class VpsSnapshotReader {
         long memTotal = 0;
         long memAvailable = 0;
         int cores = 0;
+        Map<String, String> shownNames = new HashMap<>();
+
+        for (String line : output.split("\\R")) {
+            if (line.startsWith("NAMES|")) {
+                // "service=name": the name may hold any characters except '=' and '|' in the first part
+                int eq = line.indexOf('=');
+                if (eq > 6) shownNames.put(line.substring(6, eq).trim(), line.substring(eq + 1).trim());
+            }
+        }
 
         for (String line : output.split("\\R")) {
             if (line.startsWith("CPU|")) {
@@ -65,6 +74,7 @@ final class VpsSnapshotReader {
                 VpsSnapshot.Terminal terminal = new VpsSnapshot.Terminal();
                 terminal.service = parts[1];
                 terminal.name = "osengine".equals(parts[1]) ? "main" : parts[1].substring(9);
+                terminal.title = shownNames.get(parts[1]);
                 terminal.state = parts[2];
                 terminal.memoryBytes = number(parts[3]);
                 result.terminals.add(terminal);

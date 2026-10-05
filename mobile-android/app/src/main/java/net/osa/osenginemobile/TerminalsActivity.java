@@ -183,7 +183,7 @@ public final class TerminalsActivity extends Activity {
         zone.setGravity(Gravity.CENTER);
         zone.setBackgroundResource(R.drawable.input_background);
         zone.setOnClickListener(view -> openRobots(terminal, "Журнал", journalTab));
-        zone.setContentDescription((journalTab == 1 ? "Открытые позиции " : "Профит за день ") + terminal.name);
+        zone.setContentDescription((journalTab == 1 ? "Открытые позиции " : "Профит за день ") + terminal.shownName());
         TextView number = label(big, big.length() > 7 ? 18 : 26, color);
         number.setTypeface(null, android.graphics.Typeface.BOLD);
         number.setGravity(Gravity.CENTER);
@@ -203,7 +203,7 @@ public final class TerminalsActivity extends Activity {
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(-1, -2);
         cardParams.bottomMargin = dp(10);
         card.setLayoutParams(cardParams);
-        TextView name = label(terminal.name, 20, R.color.text_primary);
+        TextView name = label(terminal.shownName(), 20, R.color.text_primary);
         name.setTypeface(null, android.graphics.Typeface.BOLD);
         card.addView(name, new LinearLayout.LayoutParams(-1, -2));
         // three zones under the name: open positions | profit of the day | open / restart
@@ -232,7 +232,7 @@ public final class TerminalsActivity extends Activity {
         TextView open = label(getString(R.string.terminal_open_button), 14, R.color.text_primary);
         open.setGravity(Gravity.CENTER);
         open.setBackgroundResource(R.drawable.button_background);
-        open.setContentDescription(getString(R.string.terminal_open_robots, terminal.name));
+        open.setContentDescription(getString(R.string.terminal_open_robots, terminal.shownName()));
         actions.addView(open, new LinearLayout.LayoutParams(-1, dp(36)));
         open.setOnClickListener(view -> openRobots(terminal));
         open.setEnabled(!preview);
@@ -241,9 +241,9 @@ public final class TerminalsActivity extends Activity {
         restart.setGravity(Gravity.CENTER);
         restart.setBackgroundResource(R.drawable.restart_outline);
         restart.setContentDescription(getString(R.string.terminal_restart_accessibility,
-            terminal.name));
+            terminal.shownName()));
         restart.setTooltipText(getString(R.string.terminal_restart_accessibility,
-            terminal.name));
+            terminal.shownName()));
         LinearLayout.LayoutParams restartParams = new LinearLayout.LayoutParams(-1, dp(36));
         restartParams.topMargin = dp(5);
         actions.addView(restart, restartParams);
@@ -286,7 +286,7 @@ public final class TerminalsActivity extends Activity {
             ? 100.0 * terminal.memoryBytes / vpsRamTotal : Double.NaN;
         addMetric(card, "RAM", memory(terminal.memoryBytes) + "  ·  "
             + percent(ramPercent) + " VPS", ramPercent);
-        card.setContentDescription(getString(R.string.terminal_open_robots, terminal.name));
+        card.setContentDescription(getString(R.string.terminal_open_robots, terminal.shownName()));
         card.setClickable(true);
         card.setFocusable(true);
         card.setOnClickListener(view -> openRobots(terminal));
@@ -301,6 +301,7 @@ public final class TerminalsActivity extends Activity {
         if (preview) return;
         Intent intent = new Intent(this, RobotsActivity.class);
         intent.putExtra("terminal_name", terminal.name);
+        intent.putExtra("terminal_title", terminal.shownName());
         if (startPage != null) {
             intent.putExtra("start_page", startPage);
             intent.putExtra("journal_tab", journalTab);
@@ -348,7 +349,7 @@ public final class TerminalsActivity extends Activity {
     private void confirmRestart(VpsSnapshot.Terminal terminal) {
         new AlertDialog.Builder(this)
             .setTitle(R.string.restart_confirm_title)
-            .setMessage(getString(R.string.restart_confirm_message, terminal.name))
+            .setMessage(getString(R.string.restart_confirm_message, terminal.shownName()))
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.restart, (dialog, which) -> restart(terminal.service))
             .show();
