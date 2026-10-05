@@ -4541,6 +4541,33 @@ namespace OsEngine.Market.Servers
         /// режим маржи и плечо инструмента по последним данным биржи.
         /// Null, если коннектор не отдаёт эти данные или они ещё не получены
         /// </summary>
+        /// <summary>
+        /// change margin mode and leverage of the security on the exchange. The connector decides if it is allowed
+        /// (for Binance Futures the server parameter "Block margin and leverage changes")
+        /// изменить режим маржи и плечо инструмента на бирже. Разрешено ли, решает коннектор
+        /// </summary>
+        public bool SetMarginInfo(string securityNameCode, bool isolated, decimal leverage, out string message)
+        {
+            IServerMarginControl control = _serverRealization as IServerMarginControl;
+
+            if (control == null)
+            {
+                message = "This connector cannot change margin mode and leverage";
+                return false;
+            }
+
+            try
+            {
+                return control.SetMarginInfo(securityNameCode, isolated, leverage, out message);
+            }
+            catch (Exception ex)
+            {
+                SendLogMessage(ex.ToString(), LogMessageType.Error);
+                message = ex.Message;
+                return false;
+            }
+        }
+
         public SecurityMarginInfo GetMarginInfo(string securityNameCode)
         {
             IServerMarginInfo provider = _serverRealization as IServerMarginInfo;

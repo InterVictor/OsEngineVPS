@@ -146,6 +146,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
         private async void ChartWindow_Loaded(object sender, RoutedEventArgs e)
         {
             CreateRemoteGrids();
+            InitMarginPanel();
 
             if (_isScreener)
             {
@@ -333,6 +334,8 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
                     }
                 }
 
+                ReadMarginTarget(snapshot);
+                await RefreshMarginInfoAsync();
                 if (TabItemMarketDepth.IsSelected) await RefreshMarketDepthAsync();
                 await RefreshAlertsAsync();
                 if (TabItemGrids.IsSelected) await RefreshGridsAsync();

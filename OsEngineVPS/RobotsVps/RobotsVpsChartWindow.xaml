@@ -52,6 +52,25 @@
                 </TabItem>
             </TabControl>
 
+            <!-- margin mode and leverage of the security of this chart: shown under the header of the side tabs, see RobotsVpsChartWindow.MarginPanel.cs -->
+            <Border Name="BorderMarginPanel" VerticalAlignment="Top" HorizontalAlignment="Left" Width="300" Height="54" Margin="0,26,0,0"
+                    BorderThickness="0,0,0,1" BorderBrush="{DynamicResource BrandStripBrush}" Visibility="Collapsed">
+                <Grid Margin="8,3,8,2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="26"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal" Grid.Row="0">
+                        <Label Name="LabelMarginMode" Content="Margin" Padding="0,4,6,0" VerticalContentAlignment="Center"/>
+                        <ComboBox Name="ComboBoxMarginMode" Width="86" Height="22" VerticalContentAlignment="Center"/>
+                        <Label Name="LabelMarginLeverage" Content="Leverage" Padding="10,4,6,0" VerticalContentAlignment="Center"/>
+                        <TextBox Name="TextBoxMarginLeverage" Style="{StaticResource TextBoxRectangular}" Width="38" Height="22" TextAlignment="Center" MaxLength="3"/>
+                        <Button Name="ButtonApplyMargin" Content="Apply" Width="62" Height="22" Margin="10,0,0,0" ToolTip="Sends the margin mode and leverage to the exchange"/>
+                    </StackPanel>
+                    <TextBlock Name="TextBlockMarginState" Grid.Row="1" FontSize="10" TextWrapping="Wrap" Foreground="Gray" VerticalAlignment="Top" Margin="0,2,0,0" Text="Margin settings: waiting for data"/>
+                </Grid>
+            </Border>
+
         </Grid>
 
         <Grid Name="GreedPositionLogHost" Margin="25,0,10,10" Height="167" VerticalAlignment="Bottom" Grid.Row="1">

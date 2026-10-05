@@ -170,6 +170,10 @@ namespace OsEngine.MCP.Modules
                         response.Result = GetServerMarginInfo(request.Params);
                         break;
 
+                    case "server_instance_set_margin_info":
+                        response.Result = SetServerMarginInfo(request.Params);
+                        break;
+
                     case "server_instance_close_position_on_board":
                         response.Result = ClosePositionOnBoard(request.Params);
                         break;
@@ -430,6 +434,24 @@ namespace OsEngine.MCP.Modules
                             min_leverage = new { type = "number", description = "Return only securities with leverage not below this value" }
                         },
                         required = new[] { "type" }
+                    }
+                },
+                new McpTool
+                {
+                    Name = "server_instance_set_margin_info",
+                    Description = "WRITES to the exchange account: sets margin mode (Isolated or Cross) and leverage for the securities. The settings belong to the exchange account, so every terminal and manual trading on that account see the change. The connector refuses while its server parameter \"Block margin and leverage changes\" is on (default). Securities with an open position or order cannot change margin mode (the exchange refuses, it is reported per security)",
+                    InputSchema = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            type = new { type = "string", description = "Server type name, e.g. BinanceFutures" },
+                            number = new { type = "integer", description = "Server instance number (default: 0)" },
+                            security_names = new { type = "array", items = new { type = "string" }, description = "Securities to change (at most 200)" },
+                            margin_mode = new { type = "string", description = "Isolated or Cross" },
+                            leverage = new { type = "integer", description = "Whole number, 1 or more; the exchange limits it per security" }
+                        },
+                        required = new[] { "type", "security_names", "margin_mode", "leverage" }
                     }
                 },
                 new McpTool
@@ -1387,6 +1409,100 @@ namespace OsEngine.MCP.Modules
                 unknown_count = unknown,
                 isolated_count = isolatedCount,
                 securities = result
+            };
+        }
+
+        // Writes margin mode and leverage to the exchange through AServer.SetMarginInfo; the connector has its own block switch
+        private static object SetServerMarginInfo(JsonElement parameters)
+        {
+            ServerType serverType = ParseServerType(parameters);
+            int serverNumber = ParseServerNumber(parameters);
+
+            AServer server = FindServer(serverType, serverNumber);
+
+            if (server == null)
+            {
+                throw new ArgumentException($"Server {serverType}#{serverNumber} not found");
+            }
+
+            if (!parameters.TryGetProperty("security_names", out JsonElement namesElement)
+                || namesElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new ArgumentException("security_names is required (array)");
+            }
+
+            List<string> names = new List<string>();
+
+            foreach (JsonElement item in namesElement.EnumerateArray())
+            {
+                string name = item.GetString();
+
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    names.Add(name);
+                }
+            }
+
+            if (names.Count == 0 || names.Count > 200)
+            {
+                throw new ArgumentException("security_names must hold from 1 to 200 names");
+            }
+
+            string modeText = parameters.TryGetProperty("margin_mode", out JsonElement modeElement) ? modeElement.GetString() : null;
+            bool isolated;
+
+            if (string.Equals(modeText, "Isolated", StringComparison.OrdinalIgnoreCase))
+            {
+                isolated = true;
+            }
+            else if (string.Equals(modeText, "Cross", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(modeText, "Crossed", StringComparison.OrdinalIgnoreCase))
+            {
+                isolated = false;
+            }
+            else
+            {
+                throw new ArgumentException("margin_mode must be Isolated or Cross");
+            }
+
+            if (!parameters.TryGetProperty("leverage", out JsonElement leverageElement)
+                || leverageElement.ValueKind != JsonValueKind.Number)
+            {
+                throw new ArgumentException("leverage is required (a whole number)");
+            }
+
+            decimal leverage = leverageElement.GetDecimal();
+
+            List<object> result = new List<object>();
+            int done = 0;
+
+            for (int i = 0; i < names.Count; i++)
+            {
+                bool ok = server.SetMarginInfo(names[i], isolated, leverage, out string message);
+
+                if (ok)
+                {
+                    done++;
+                }
+
+                result.Add(new { security_name = names[i], ok, message });
+
+                // a refusal that is the same for every security (blocked, not connected) is not repeated 200 times
+                if (!ok && i == 0 && (message.Contains("blocked") || message.Contains("not connected") || message.Contains("cannot change")))
+                {
+                    break;
+                }
+
+                System.Threading.Thread.Sleep(150);
+            }
+
+            return new
+            {
+                type = serverType.ToString(),
+                number = serverNumber,
+                requested = names.Count,
+                done,
+                results = result
             };
         }
 

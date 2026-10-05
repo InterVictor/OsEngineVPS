@@ -49,6 +49,7 @@ namespace OsEngine.Market.Servers.Binance.Futures
             CreateParameterBoolean("Demo Account", false);
             CreateParameterBoolean("Extended Data", false);
             CreateParameterBoolean("Use Shared RateGate", false);
+            CreateParameterBoolean("Block margin and leverage changes", true);
 
             ServerParameters[0].Comment = OsLocalization.Market.Label246;
             ServerParameters[1].Comment = OsLocalization.Market.Label247;
@@ -57,6 +58,7 @@ namespace OsEngine.Market.Servers.Binance.Futures
             ServerParameters[4].Comment = OsLocalization.Market.Label268;
             ServerParameters[5].Comment = OsLocalization.Market.Label270;
             ServerParameters[6].Comment = OsLocalization.Market.Label324;
+            ServerParameters[7].Comment = "On: the terminal never changes margin mode and leverage on the exchange (use it for accounts managed elsewhere). Off: allowed";
 
         }
 
@@ -66,7 +68,7 @@ namespace OsEngine.Market.Servers.Binance.Futures
         }
     }
 
-    public class BinanceServerFuturesRealization : IServerRealization, IServerMarginInfo
+    public class BinanceServerFuturesRealization : IServerRealization, IServerMarginInfo, IServerMarginControl
     {
         #region 1 Constructor, Status, Connection
 
@@ -624,6 +626,148 @@ namespace OsEngine.Market.Servers.Binance.Futures
             }
 
             return null;
+        }
+
+        // the switch is a server parameter (index 7); a server without it is treated as blocked
+        private bool MarginChangesBlocked
+        {
+            get
+            {
+                if (ServerParameters == null || ServerParameters.Count <= 7)
+                {
+                    return true;
+                }
+
+                ServerParameterBool parameter = ServerParameters[7] as ServerParameterBool;
+
+                return parameter == null || parameter.Value;
+            }
+        }
+
+        public bool SetMarginInfo(string securityNameCode, bool isolated, decimal leverage, out string message)
+        {
+            message = null;
+
+            if (MarginChangesBlocked)
+            {
+                message = "Changes are blocked for this server: server parameter \"Block margin and leverage changes\" is on";
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(securityNameCode))
+            {
+                message = "Security name is empty";
+                return false;
+            }
+
+            if (leverage < 1 || leverage != decimal.Truncate(leverage))
+            {
+                message = "Leverage must be a whole number, 1 or more";
+                return false;
+            }
+
+            if (ServerStatus != ServerConnectStatus.Connect)
+            {
+                message = "Server is not connected";
+                return false;
+            }
+
+            string done = "";
+
+            SecurityMarginInfo current = GetMarginInfo(securityNameCode);
+
+            if (current == null || current.IsIsolated != isolated)
+            {
+                Dictionary<string, string> modeParam = new Dictionary<string, string>();
+                modeParam.Add("symbol=", securityNameCode);
+                modeParam.Add("&marginType=", isolated ? "ISOLATED" : "CROSSED");
+
+                string answer = PostSettingQuery("/" + type_str_selector + "/v1/marginType", modeParam, out string error);
+
+                // "No need to change margin type" - the exchange already has this mode, that is what we want
+                if (answer == null && (error == null || !error.Contains("No need to change margin type")))
+                {
+                    message = "Margin mode was not changed: " + error;
+                    return false;
+                }
+
+                done = isolated ? "Isolated" : "Cross";
+            }
+
+            Dictionary<string, string> levParam = new Dictionary<string, string>();
+            levParam.Add("symbol=", securityNameCode);
+            levParam.Add("&leverage=", decimal.Truncate(leverage).ToString(CultureInfo.InvariantCulture));
+
+            string levAnswer = PostSettingQuery("/" + type_str_selector + "/v1/leverage", levParam, out string levError);
+
+            if (levAnswer == null)
+            {
+                message = (done != "" ? "Margin mode is now " + done + ", but " : "") + "leverage was not changed: " + levError;
+                return false;
+            }
+
+            decimal actual = leverage;
+
+            try
+            {
+                JToken token = JToken.Parse(levAnswer)["leverage"];
+
+                if (token != null)
+                {
+                    actual = token.Value<decimal>();
+                }
+            }
+            catch
+            {
+                // the answer is not needed for anything but the message
+            }
+
+            // show the new values at once, the next account update (every 30 seconds) brings the same
+            Dictionary<string, SecurityMarginInfo> copy = new Dictionary<string, SecurityMarginInfo>(_marginInfo);
+            SecurityMarginInfo item = new SecurityMarginInfo();
+            item.SecurityNameCode = securityNameCode;
+            item.Leverage = actual;
+            item.IsIsolated = isolated;
+            item.TimeUpdate = DateTime.UtcNow;
+            copy[securityNameCode] = item;
+            _marginInfo = copy;
+
+            message = securityNameCode + ": " + (isolated ? "Isolated" : "Cross") + ", leverage " + actual.ToString(CultureInfo.InvariantCulture) + "x";
+
+            if (actual != leverage)
+            {
+                message += " (the maximum for this symbol, requested " + leverage.ToString(CultureInfo.InvariantCulture) + "x)";
+            }
+
+            SendLogMessage("Margin settings changed from the terminal: " + message, LogMessageType.System);
+            return true;
+        }
+
+        // like CreateQuery, but gives the error text of the exchange back instead of only logging it
+        private string PostSettingQuery(string endpoint, Dictionary<string, string> param, out string error)
+        {
+            error = null;
+
+            if (IsIpBanned())
+            {
+                error = "REST requests are paused because of the exchange limit, try later";
+                return null;
+            }
+
+            try
+            {
+                lock (_queryHttpLocker)
+                {
+                    GetRateGate().WaitToProceed();
+                    WaitIfWeightNearLimit();
+                    return PerformHttpRequest(Method.POST, endpoint, param, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
         }
 
         private void UpdateMarginInfo(List<PositionFutures> positions)
