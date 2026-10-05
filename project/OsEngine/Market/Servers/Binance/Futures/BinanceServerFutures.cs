@@ -681,6 +681,8 @@ namespace OsEngine.Market.Servers.Binance.Futures
                 Dictionary<string, string> modeParam = new Dictionary<string, string>();
                 modeParam.Add("symbol=", securityNameCode);
                 modeParam.Add("&marginType=", isolated ? "ISOLATED" : "CROSSED");
+                // the connection from a VPS to the exchange sometimes takes ~5 s to open; the timestamp is already set by then
+                modeParam.Add("&recvWindow=", "60000");
 
                 string answer = PostSettingQuery("/" + type_str_selector + "/v1/marginType", modeParam, out string error);
 
@@ -697,6 +699,7 @@ namespace OsEngine.Market.Servers.Binance.Futures
             Dictionary<string, string> levParam = new Dictionary<string, string>();
             levParam.Add("symbol=", securityNameCode);
             levParam.Add("&leverage=", decimal.Truncate(leverage).ToString(CultureInfo.InvariantCulture));
+            levParam.Add("&recvWindow=", "60000");
 
             string levAnswer = PostSettingQuery("/" + type_str_selector + "/v1/leverage", levParam, out string levError);
 
