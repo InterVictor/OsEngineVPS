@@ -852,6 +852,12 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             string sourceVps = VpsProfiles.NameOf(_profileId);
             string targetVps = VpsProfiles.NameOf(plan.TargetVpsId);
 
+            // A separate window, on purpose: an exchange key bound to IP addresses (Binance) does not accept the new VPS until its IP is added,
+            // and the robots there could not trade after the move. "Continue" works only after the user ticks that the IP was added.
+            string targetIp = VpsRemoteSession.SshOfVps(plan.TargetVpsId)?.Ssh.Host ?? "?";
+            RobotsVpsIpReminderDialog ipReminder = new RobotsVpsIpReminderDialog(targetVps, targetIp) { Owner = Window.GetWindow(this) };
+            if (ipReminder.ShowDialog() != true) return;
+
             // the open positions stay on the exchange; the robots do not manage them while the terminal is being moved
             RemoteMcpClient client = instance.IsActive ? VpsRemoteSession.GetClient(sourceKey) : null;
             List<string> positions = client == null ? null : await VpsMigration.OpenPositionsAsync(client).ConfigureAwait(true);

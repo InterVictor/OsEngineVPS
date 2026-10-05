@@ -1,0 +1,40 @@
+﻿<Window x:Class="OsEngine.OsTrader.Gui.RobotsVps.RobotsVpsIpReminderDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Reminder: IP address of the target VPS" SizeToContent="Height" MinHeight="300" Width="560" ResizeMode="NoResize"
+        Style="{StaticResource WindowStyleNoResize}" WindowStartupLocation="CenterOwner" Icon="/Images/OsLogo.ico">
+    <!-- A window of its own on purpose: the migration cannot work with an exchange key that does not know the new IP. The height follows the content. -->
+    <Grid Margin="16,14,16,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Text="Add the IP address of the target VPS to the exchange API key BEFORE the migration"
+                   FontWeight="Bold" FontSize="15" TextWrapping="Wrap" Foreground="Orange"/>
+        <TextBlock Grid.Row="1" Name="TextBlockTarget" Margin="0,12,0,0" TextWrapping="Wrap" Foreground="Gainsboro"/>
+        <Grid Grid.Row="2" Margin="0,6,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox Grid.Column="0" Name="TextBoxIp" IsReadOnly="True" FontSize="22" FontWeight="Bold" Height="40"
+                     VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+            <Button Grid.Column="1" Name="ButtonCopy" Content="Copy" Width="90" Height="40" Margin="8,0,0,0"/>
+        </Grid>
+        <TextBlock Grid.Row="3" Margin="0,12,0,0" TextWrapping="Wrap" FontSize="12" Foreground="Gray"
+                   Text="Binance: API Management -> the key -> Edit restrictions -> Restrict access to trusted IPs only -> add this address -> Save. Do the same for every exchange key of the terminal that is bound to IP addresses (the old VPS address may stay)."/>
+        <TextBlock Grid.Row="4" Margin="0,10,0,0" TextWrapping="Wrap" FontSize="12" Foreground="OrangeRed"
+                   Text="Without it the connector on the new VPS cannot connect and the robots there will not trade; by then the source terminal is already stopped."/>
+        <StackPanel Grid.Row="5" Margin="0,14,0,0">
+            <CheckBox Name="CheckBoxDone" Content="I added this IP address to the API key(s)"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                <Button Name="ButtonContinue" Content="Continue" Width="110" Height="28" Margin="0,0,8,0" IsEnabled="False" IsDefault="True"/>
+                <Button Name="ButtonCancel" Content="Cancel" Width="110" Height="28" IsCancel="True"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>
