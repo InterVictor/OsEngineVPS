@@ -24,10 +24,10 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
         public static async Task OpenRegimePanelAsync(RemoteMcpClient client, string botId, Action<string> status)
         {
-            string instanceName = VpsRemoteSession.GetInstanceName(client);
-            VpsInstance instance = VpsRemoteSession.Instances.FirstOrDefault(i => string.Equals(i.Name, instanceName, StringComparison.OrdinalIgnoreCase));
+            string instanceKey = VpsRemoteSession.GetInstanceName(client);
+            VpsInstance instance = VpsRemoteSession.InstanceOf(instanceKey);
 
-            if (instance == null || VpsRemoteSession.SshCredentials == null || VpsRemoteSession.SshRun == null)
+            if (instance == null || VpsRemoteSession.SshCredentialsFor(instanceKey) == null || VpsRemoteSession.SshRunFor(instanceKey) == null)
             {
                 throw new InvalidOperationException("Connect to the VPS over SSH in the VPS window first");
             }
@@ -58,7 +58,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
             status?.Invoke("Taking the robot data from the VPS...");
 
-            using (VpsFileService files = new VpsFileService(VpsRemoteSession.SshCredentials, VpsRemoteSession.SshRun, VpsRemoteSession.Instances))
+            using (VpsFileService files = new VpsFileService(VpsRemoteSession.SshCredentialsFor(instanceKey), VpsRemoteSession.SshRunFor(instanceKey), VpsRemoteSession.InstancesFor(instanceKey)))
             {
                 await files.ConnectAsync().ConfigureAwait(true);
                 List<VpsFileEntry> entries = (await files.ListAsync(remoteFolder).ConfigureAwait(true))

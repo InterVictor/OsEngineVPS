@@ -25,10 +25,31 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
     {
         private const string MainServerName = "osengine-server";
 
-        public static string ServerName(string instance) =>
-            string.Equals(instance, VpsRemoteSession.MainInstance, StringComparison.OrdinalIgnoreCase)
+        // The name of the connection of a terminal key (see VpsRemoteSession.Key). The first VPS keeps the names of the
+        // single-VPS versions: osengine-server (main), osengine-server-<terminal>. The other VPS: osengine-server-v<id>-<terminal>
+        // (the id, not the name of the VPS: renaming a VPS does not change what the agents are connected to).
+        public static string ServerName(string key)
+        {
+            VpsRemoteSession.SplitKey(key, out string vpsId, out string terminal);
+            string prefix = vpsId == VpsProfiles.FirstId ? MainServerName : MainServerName + "-" + VpsProfiles.Slug(vpsId);
+
+            return string.Equals(terminal, VpsRemoteSession.MainInstance, StringComparison.OrdinalIgnoreCase) && vpsId == VpsProfiles.FirstId
                 ? MainServerName
-                : MainServerName + "-" + instance;
+                : prefix + "-" + terminal;
+        }
+
+        // the reverse of ServerName: the terminal key of a connection name of ours
+        private static string KeyOf(string serverName)
+        {
+            if (string.Equals(serverName, MainServerName, StringComparison.OrdinalIgnoreCase)) return VpsRemoteSession.MainInstance;
+
+            string rest = serverName.Substring(MainServerName.Length + 1);
+            System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(rest, "^v(\\d+)-(.+)$");
+
+            return match.Success && match.Groups[1].Value != VpsProfiles.FirstId
+                ? VpsRemoteSession.Key(match.Groups[1].Value, match.Groups[2].Value)
+                : rest;
+        }
 
         public static string FileFor(string folder) => Path.Combine(folder, ".mcp.json");
 
@@ -39,7 +60,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
             return servers.Select(s => s.Key)
                 .Where(IsOurs)
-                .Select(n => n.Length == MainServerName.Length ? VpsRemoteSession.MainInstance : n.Substring(MainServerName.Length + 1))
+                .Select(KeyOf)
                 .ToList();
         }
 
@@ -57,6 +78,22 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
             foreach (string name in ours) servers.Remove(name);
             Write(path, root);
+        }
+
+        /// <summary>Removes the entries of one VPS (the terminals of the VPS with this id) from the file of <paramref name="folder"/>; the others stay.</summary>
+        public static List<string> RemoveVps(string folder, string vpsId)
+        {
+            string path = FileFor(folder);
+            JsonObject servers = ReadServers(path, out JsonObject root);
+            List<string> mine = servers.Select(s => s.Key).Where(IsOurs).Where(n =>
+            {
+                VpsRemoteSession.SplitKey(KeyOf(n), out string id, out _);
+                return id == vpsId;
+            }).ToList();
+
+            foreach (string name in mine) servers.Remove(name);
+            if (mine.Count > 0) Write(path, root);
+            return mine;
         }
 
         private static bool IsOurs(string name) =>
@@ -98,12 +135,14 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
         }
 
         /// <summary>
-        /// Writes <paramref name="connected"/> (terminal name → local port and key) into the file of
-        /// <paramref name="folder"/> and removes the terminals that no longer exist on the VPS (not in
-        /// <paramref name="existing"/>). A stopped terminal stays. Returns what changed, empty if nothing did.
+        /// Writes <paramref name="connected"/> (terminal key → local port and key) into the file of
+        /// <paramref name="folder"/> and removes the terminals that no longer exist on their VPS (not in
+        /// <paramref name="existing"/>); only the VPS in <paramref name="knownVps"/> (those whose terminals are known at the
+        /// moment) are checked, so a VPS that is not connected keeps its entries. A stopped terminal stays.
+        /// Returns what changed, empty if nothing did.
         /// </summary>
         public static List<string> Update(string folder, IReadOnlyDictionary<string, (int LocalPort, string Key)> connected,
-            IEnumerable<string> existing)
+            IEnumerable<string> existing, ISet<string> knownVps)
         {
             string path = FileFor(folder);
             JsonObject servers = ReadServers(path, out JsonObject root);
@@ -133,6 +172,13 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             foreach (string name in servers.Select(s => s.Key)
                 .Where(n => n.StartsWith(MainServerName + "-", StringComparison.OrdinalIgnoreCase) && !keep.Contains(n)).ToList())
             {
+                VpsRemoteSession.SplitKey(KeyOf(name), out string vpsId, out _);
+
+                if (!knownVps.Contains(vpsId))
+                {
+                    continue; // that VPS is not connected now: nothing is known about its terminals
+                }
+
                 servers.Remove(name);
                 changes.Add(name.Substring(MainServerName.Length + 1) + " removed");
             }

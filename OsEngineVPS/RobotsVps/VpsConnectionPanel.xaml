@@ -1,0 +1,230 @@
+<UserControl x:Class="OsEngine.OsTrader.Gui.RobotsVps.VpsConnectionPanel"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:OsEngine.OsTrader.Gui.RobotsVps"
+        mc:Ignorable="d"
+        MinWidth="700">
+    <!-- the connection and administration of ONE VPS (a tab of the Settings window): SSH tunnel, its terminals, maintenance, monitoring, backups -->
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Строка подключения: адрес удалённого MCP API (обычно через SSH-туннель) и ключ -->
+        <Grid Grid.Row="0" Margin="5">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="0"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="0"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <Label Grid.Row="0" Grid.Column="0" Name="LabelUrl" Content="MCP URL" VerticalAlignment="Center" Visibility="Collapsed"/>
+            <TextBox Grid.Row="0" Grid.Column="1" Name="TextBoxUrl" VerticalAlignment="Center" Height="26" Margin="0,0,10,0" Visibility="Collapsed"
+                     Text="http://localhost:6510/api/v2/mcp"/>
+
+            <Label Grid.Row="0" Grid.Column="2" Name="LabelApiKey" Content="API Key" VerticalAlignment="Center" Visibility="Collapsed"/>
+            <PasswordBox Grid.Row="0" Grid.Column="3" Name="PasswordBoxApiKey" VerticalAlignment="Center" Height="26" Margin="0,0,10,0" Visibility="Collapsed"/>
+
+            <Button Grid.Row="0" Grid.Column="4" Name="ButtonConnect" Content="Connect" Width="100" Height="28" Margin="0,0,5,0" Click="ButtonConnect_Click"/>
+            <Button Grid.Row="0" Grid.Column="5" Name="ButtonDisconnect" Content="Disconnect" Width="100" Height="28" Margin="0,0,10,0" Click="ButtonDisconnect_Click" IsEnabled="False"/>
+
+            <Ellipse Grid.Row="0" Grid.Column="6" Name="EllipseStatus" Width="14" Height="14" Fill="Gray" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,0,5,0"/>
+            <Label Grid.Row="0" Grid.Column="6" Name="LabelStatus" Content="Disconnected" HorizontalAlignment="Left" Margin="20,0,0,0" VerticalAlignment="Center"/>
+
+            <Grid Grid.Row="1" Grid.ColumnSpan="8" Margin="0,5,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190"/>
+                    <ColumnDefinition Width="105"/>
+                    <ColumnDefinition Width="140"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="90"/>
+                    <ColumnDefinition Width="95"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                    <TextBlock Text="SSH host" FontSize="11" Foreground="Gray"/>
+                    <TextBox Name="TextBoxSshHost" Height="24"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                    <TextBlock Text="SSH user" FontSize="11" Foreground="Gray"/>
+                    <TextBox Name="TextBoxSshUser" Height="24" Text="root"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Margin="0,0,8,0">
+                    <TextBlock Text="SSH password" FontSize="11" Foreground="Gray"/>
+                    <PasswordBox Name="PasswordBoxSshPassword" Height="24"/>
+                </StackPanel>
+                <StackPanel Grid.Column="3" Margin="0,0,8,0">
+                    <TextBlock Text="OpenSSH private key file (optional if a password is set)" FontSize="11" Foreground="Gray"/>
+                    <TextBox Name="TextBoxSshKeyPath" Height="24"/>
+                    <CheckBox Name="CheckBoxAutoConnectSsh" Content="Connect SSH automatically on program start" Margin="0,4,0,0" Click="CheckBoxAutoConnectSsh_Click"/>
+                </StackPanel>
+                <StackPanel Grid.Column="4" Margin="0,0,8,0">
+                    <TextBlock Text="Local port" FontSize="11" Foreground="Gray"/>
+                    <TextBox Name="TextBoxSshLocalPort" Height="24" Text="6510"/>
+                </StackPanel>
+                <StackPanel Grid.Column="5">
+                    <TextBlock Text="VPS API port" FontSize="11" Foreground="Gray"/>
+                    <TextBox Name="TextBoxSshRemotePort" Height="24" Text="6500"/>
+                </StackPanel>
+            </Grid>
+
+        </Grid>
+
+        <!-- Сервер: развёртывание по SSH и ключ этого компьютера -->
+        <Border Grid.Row="1" Margin="5,0,5,0" Padding="8,6" BorderThickness="1" BorderBrush="{DynamicResource PanelAltBorderBrush}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Label Grid.Row="0" Grid.Column="0" Content="Server" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" Name="TextBlockComputerKey" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="Gray"
+                           Text="SSH key of this computer: not registered — connect once with the root password"/>
+                <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal">
+                    <Button Name="ButtonComputers" Content="Computers..." Width="100" Height="28" Margin="0,0,5,0" Click="ButtonComputers_Click"
+                            ToolTip="Computers whose SSH keys may log in to the VPS; revoke a lost or replaced one"/>
+                    <Button Name="ButtonDeployServer" Content="Deploy / repair server" Width="170" Height="28" Click="ButtonDeployServer_Click"
+                        ToolTip="Sets up OsEngine on the VPS over SSH (IP, user and password above). Safe to run again on a working server: only missing parts are added."/>
+                </StackPanel>
+
+                <!-- Терминалы на VPS: службы osengine / osengine-<name>, у каждого свои папка, порт MCP и ключ -->
+                <DataGrid Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Name="DataGridTerminals" Height="120" Margin="0,6,10,0"
+                          AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
+                          Style="{StaticResource DataGridStyle}">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Terminal" Width="*" Binding="{Binding Title}"/>
+                        <DataGridTextColumn Header="MCP port" Width="80" Binding="{Binding Port}"/>
+                        <DataGridTextColumn Header="Service" Width="100" Binding="{Binding State}"/>
+                        <DataGridTextColumn Header="CPU" Width="70" Binding="{Binding Cpu}"/>
+                        <DataGridTextColumn Header="Memory" Width="90" Binding="{Binding Memory}"/>
+                        <DataGridTextColumn Header="Build" Width="90" Binding="{Binding Build}"/>
+                        <DataGridTextColumn Header="Connection" Width="110" Binding="{Binding Connection}"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel Grid.Row="1" Grid.Column="2" Name="PanelTerminalButtons" Margin="0,6,0,0" Width="170">
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" Name="TextBoxNewTerminal" Height="24" Margin="0,0,4,0"
+                                 ToolTip="Name of a new terminal: latin letters, digits, '-'"/>
+                        <Button Grid.Column="1" Name="ButtonTerminalAdd" Content="Add" Width="60" Height="24" Click="ButtonTerminalAdd_Click"
+                                ToolTip="Create one more independent terminal on this VPS"/>
+                    </Grid>
+                    <UniformGrid Columns="2">
+                        <Button Name="ButtonTerminalStart" Content="Start" Height="24" Margin="0,0,2,2" Click="ButtonTerminalStart_Click"/>
+                        <Button Name="ButtonTerminalStop" Content="Stop" Height="24" Margin="2,0,0,2" Click="ButtonTerminalStop_Click"/>
+                        <Button Name="ButtonTerminalRestart" Content="Restart" Height="24" Margin="0,2,2,0" Click="ButtonTerminalRestart_Click"/>
+                        <Button Name="ButtonTerminalRemove" Content="Remove" Height="24" Margin="2,2,0,0" Click="ButtonTerminalRemove_Click"/>
+                    </UniformGrid>
+                    <Button Name="ButtonTerminalRename" Content="Rename..." Height="24" Margin="0,4,0,0" Click="ButtonTerminalRename_Click"
+                            ToolTip="Change the name shown for the terminal (only the shown name; the service, the folder and the connection of AI agents keep their names)"/>
+                </StackPanel>
+
+                <!-- Обслуживание: обновление сборки, роботы, логи, перезагрузка VPS -->
+                <Grid Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,6,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Name="PanelMaintenanceButtons">
+                        <Button Name="ButtonUpdateBuild" Content="Update build" Width="120" Height="26" Margin="0,0,5,0" Click="ButtonUpdateBuild_Click"
+                                ToolTip="Installs the local build package (VpsServer folder) on every running terminal, one by one; a terminal that does not start with the new build is rolled back automatically"/>
+                        <Button Name="ButtonFiles" Content="Files..." Width="120" Height="26" Margin="0,0,5,0" Click="ButtonFiles_Click"
+                                ToolTip="File manager of the VPS: robots, indicators, settings and logs of every terminal — upload, download, copy, move, rename, delete to trash"/>
+                        <Button Name="ButtonCleanLogs" Content="Clean logs" Width="100" Height="26" Margin="0,0,5,0" Click="ButtonCleanLogs_Click"
+                                ToolTip="Deletes the selected terminal's log files except today's and trims the system journal to 7 days"/>
+                        <Button Name="ButtonRebootVps" Content="Reboot VPS" Width="100" Height="26" Margin="0,0,5,0" Click="ButtonRebootVps_Click"
+                                ToolTip="Restarts the whole server; the terminals start with it and the connection comes back by itself"/>
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Name="TextBlockPackage" VerticalAlignment="Center" Margin="10,0,0,0" Foreground="Gray" TextWrapping="Wrap"/>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- Мониторинг нагрузки VPS (по SSH из /proc) и резервные копии данных терминалов -->
+        <Border Grid.Row="2" Margin="5,5,5,0" Padding="8,6" BorderThickness="1" BorderBrush="{DynamicResource PanelAltBorderBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="200"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                    <TextBlock Name="TextBlockCpu" Text="CPU: —" Margin="0,0,0,2"/>
+                    <local:VpsSparkline x:Name="SparklineCpu" Height="50" Threshold="90"
+                                        ToolTip="CPU load of the VPS, last hour. Alert: above 90 % for 1 minute"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                    <TextBlock Name="TextBlockRam" Text="RAM: —" Margin="0,0,0,2"/>
+                    <local:VpsSparkline x:Name="SparklineRam" Height="50" Threshold="85"
+                                        ToolTip="Memory used on the VPS, last hour. Alert: above 85 %"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Margin="0,0,8,0">
+                    <TextBlock Name="TextBlockDisk" Text="Disk: —" Margin="0,0,0,2"/>
+                    <local:VpsSparkline x:Name="SparklineDisk" Height="50" Threshold="90"
+                                        ToolTip="Disk used on the VPS, last hour. Alert: above 90 %"/>
+                </StackPanel>
+                <StackPanel Grid.Column="3" Name="PanelBackupButtons">
+                    <TextBlock Name="TextBlockVpsInfo" Text="Uptime: —" Foreground="Gray" Margin="0,0,0,4" TextWrapping="Wrap"/>
+                    <UniformGrid Columns="2">
+                        <Button Name="ButtonBackupData" Content="Backup data" Height="24" Margin="0,0,2,0" Click="ButtonBackupData_Click"
+                                ToolTip="Downloads the selected terminal's data (bots, settings, journals, robot scripts, MCP key; no logs) to the VpsBackups folder of this computer"/>
+                        <Button Name="ButtonRestoreData" Content="Restore..." Height="24" Margin="2,0,0,0" Click="ButtonRestoreData_Click"
+                                ToolTip="Replaces the selected terminal's data with a backup; the current data stays on the VPS as data.before-restore-*"/>
+                    </UniformGrid>
+                    <CheckBox Name="CheckBoxDailyBackup" Content="Daily backup to this computer" Margin="0,4,0,0" Click="CheckBoxDailyBackup_Click"
+                              ToolTip="While connected, each running terminal is backed up once a day; the newest 14 archives per terminal are kept"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Лог: события SSE удалённого сервера (server_instance.*, terminal.*) + сообщения этого окна -->
+        <Grid Grid.Row="3" Name="LogGrid" Margin="5" Background="{DynamicResource PanelAltBrush}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0">
+                <Rectangle Height="29" Stroke="{DynamicResource PanelAltBorderBrush}" VerticalAlignment="Top" HorizontalAlignment="Stretch" Margin="5,3,1,0"/>
+                <Label Content="Log" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,6,0,0" FontSize="12"/>
+            </Grid>
+
+            <DataGrid Grid.Row="1" Name="LogDataGrid"
+                      AutoGenerateColumns="False"
+                      CanUserAddRows="False"
+                      IsReadOnly="True"
+                      Margin="5,5,1,1"
+                      Style="{StaticResource DataGridStyle}">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Time" Width="150" Binding="{Binding Time, StringFormat='{}{0:HH:mm:ss}'}"/>
+                    <DataGridTextColumn Header="Message" Width="*" Binding="{Binding Message}"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+    </Grid>
+</UserControl>

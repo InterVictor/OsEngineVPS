@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using OsEngine.MCP.Client;
@@ -6,90 +6,225 @@ using OsEngine.MCP.Client;
 namespace OsEngine.OsTrader.Gui.RobotsVps
 {
     /// <summary>
-    /// Shares the remote MCP sessions with the independent Robots.VPS workspaces. One VPS can run several
-    /// independent OsEngine terminals (systemd services osengine, osengine-&lt;name&gt;); the VPS window keeps one
-    /// MCP client per terminal here, and each Robots.VPS workspace is bound to one terminal by name.
+    /// Shares the remote MCP sessions with the independent Robots.VPS workspaces. This computer may be connected to several VPS,
+    /// and one VPS can run several independent OsEngine terminals (systemd services osengine, osengine-&lt;name&gt;). The connection
+    /// panel of every VPS publishes here its MCP clients (one per terminal) and its SSH access; each Robots.VPS workspace is bound
+    /// to one terminal by its KEY: the plain terminal name for the first VPS (as in the single-VPS versions, so saved layouts and
+    /// names stay valid), "&lt;VPS id&gt;/&lt;terminal name&gt;" for the others.
     /// </summary>
     public static class VpsRemoteSession
     {
         /// <summary>the terminal of the original single-terminal layout (/opt/osengine, service "osengine")</summary>
         public const string MainInstance = "main";
 
-        private static readonly object Locker = new object();
-        private static Dictionary<string, RemoteMcpClient> _clients =
-            new Dictionary<string, RemoteMcpClient>(StringComparer.OrdinalIgnoreCase);
+        private sealed class VpsEntry
+        {
+            public Dictionary<string, RemoteMcpClient> Clients = new Dictionary<string, RemoteMcpClient>(StringComparer.OrdinalIgnoreCase);
+            public VpsSshCredentials Ssh;
+            public Func<string, System.Threading.Tasks.Task<string>> Run;
+            public IReadOnlyList<VpsInstance> Instances = new List<VpsInstance>();
+            public Dictionary<string, (int LocalPort, string Key)> McpEntries = new Dictionary<string, (int, string)>(StringComparer.OrdinalIgnoreCase);
+        }
 
-        /// <summary>raised (on any thread) whenever the set of terminals or their clients change</summary>
+        private static readonly object Locker = new object();
+        private static readonly Dictionary<string, VpsEntry> Vps = new Dictionary<string, VpsEntry>();
+
+        /// <summary>raised (on any thread) whenever the set of terminals, their clients or their shown names change</summary>
         public static event Action InstancesChanged;
 
-        /// <summary>connected terminals, the main one first</summary>
+        // ---- keys ----
+
+        /// <summary>the key of a terminal: its plain name for the first VPS, "id/name" for the others</summary>
+        public static string Key(string vpsId, string terminalName) =>
+            vpsId == VpsProfiles.FirstId ? terminalName : vpsId + "/" + terminalName;
+
+        public static void SplitKey(string key, out string vpsId, out string terminalName)
+        {
+            int slash = key == null ? -1 : key.IndexOf('/');
+
+            if (slash < 0)
+            {
+                vpsId = VpsProfiles.FirstId;
+                terminalName = key;
+            }
+            else
+            {
+                vpsId = key.Substring(0, slash);
+                terminalName = key.Substring(slash + 1);
+            }
+        }
+
+        // ---- terminals ----
+
+        /// <summary>keys of the connected terminals: the VPS in the order of the list, the main terminal of each first</summary>
         public static IReadOnlyList<string> InstanceNames
         {
             get
             {
+                List<string> order = VpsProfiles.All.Select(p => p.Id).ToList();
+
                 lock (Locker)
                 {
-                    return _clients.Keys
-                        .OrderBy(n => string.Equals(n, MainInstance, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                        .ThenBy(n => n, StringComparer.OrdinalIgnoreCase)
+                    return Vps.OrderBy(v => order.IndexOf(v.Key) < 0 ? int.MaxValue : order.IndexOf(v.Key))
+                        .SelectMany(v => v.Value.Clients.Keys
+                            .OrderBy(n => string.Equals(n, MainInstance, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                            .ThenBy(n => n, StringComparer.OrdinalIgnoreCase)
+                            .Select(n => Key(v.Key, n)))
                         .ToList();
                 }
             }
         }
 
-        // SSH of the VPS window (null when it does not run its own tunnel): lets other windows reach the terminals'
-        // files, e.g. a robot panel built on this computer from the data a robot writes on the VPS
-        internal static VpsSshCredentials SshCredentials { get; private set; }
-        internal static Func<string, System.Threading.Tasks.Task<string>> SshRun { get; private set; }
-        internal static IReadOnlyList<VpsInstance> Instances { get; private set; } = new List<VpsInstance>();
-
-        internal static void SetSsh(VpsSshCredentials credentials, Func<string, System.Threading.Tasks.Task<string>> run, IReadOnlyList<VpsInstance> instances)
-        {
-            string before = string.Join("|", Instances.Select(i => i.Name + "=" + i.Title));
-            SshCredentials = credentials;
-            SshRun = run;
-            Instances = instances ?? new List<VpsInstance>();
-
-            // a terminal was renamed (here or on another computer): the tabs must show the new name
-            if (before != string.Join("|", Instances.Select(i => i.Name + "=" + i.Title)))
-            {
-                InstancesChanged?.Invoke();
-            }
-        }
-
-        /// <summary>the shown name of a terminal (its technical name until somebody renames it)</summary>
-        internal static string TitleOf(string instanceName) =>
-            Instances.FirstOrDefault(i => string.Equals(i.Name, instanceName, StringComparison.OrdinalIgnoreCase))?.Title ?? instanceName;
-
-        internal static void RaiseInstancesChanged() => InstancesChanged?.Invoke();
-
-        /// <summary>the terminal name of a client from GetClient, or null</summary>
+        /// <summary>the terminal key of a client from GetClient, or null</summary>
         public static string GetInstanceName(RemoteMcpClient client)
         {
             lock (Locker)
             {
-                return _clients.FirstOrDefault(c => ReferenceEquals(c.Value, client)).Key;
+                foreach (KeyValuePair<string, VpsEntry> vps in Vps)
+                {
+                    string name = vps.Value.Clients.FirstOrDefault(c => ReferenceEquals(c.Value, client)).Key;
+                    if (name != null) return Key(vps.Key, name);
+                }
+
+                return null;
             }
         }
 
-        public static RemoteMcpClient GetClient(string instanceName)
+        public static RemoteMcpClient GetClient(string key)
         {
+            if (key == null) return null;
+            SplitKey(key, out string vpsId, out string name);
+
             lock (Locker)
             {
-                return instanceName != null && _clients.TryGetValue(instanceName, out RemoteMcpClient client) ? client : null;
+                return Vps.TryGetValue(vpsId, out VpsEntry entry) && entry.Clients.TryGetValue(name, out RemoteMcpClient client) ? client : null;
             }
         }
 
-        public static void SetClients(IDictionary<string, RemoteMcpClient> clients)
+        /// <summary>replaces the MCP clients of one VPS (keys: plain terminal names); null = the VPS is disconnected</summary>
+        public static void SetClients(string vpsId, IDictionary<string, RemoteMcpClient> clients)
         {
             lock (Locker)
             {
-                _clients = clients == null
+                VpsEntry entry = Entry(vpsId);
+                entry.Clients = clients == null
                     ? new Dictionary<string, RemoteMcpClient>(StringComparer.OrdinalIgnoreCase)
                     : new Dictionary<string, RemoteMcpClient>(clients, StringComparer.OrdinalIgnoreCase);
             }
 
             InstancesChanged?.Invoke();
+        }
+
+        // ---- SSH access of the VPS (lets other windows reach the terminals' files) ----
+
+        internal static void SetSsh(string vpsId, VpsSshCredentials credentials, Func<string, System.Threading.Tasks.Task<string>> run, IReadOnlyList<VpsInstance> instances)
+        {
+            string before;
+            string after;
+
+            lock (Locker)
+            {
+                VpsEntry entry = Entry(vpsId);
+                before = Fingerprint(entry.Instances);
+                entry.Ssh = credentials;
+                entry.Run = run;
+                entry.Instances = instances ?? new List<VpsInstance>();
+                after = Fingerprint(entry.Instances);
+            }
+
+            // a terminal was renamed (here or on another computer): the tabs must show the new name
+            if (before != after)
+            {
+                InstancesChanged?.Invoke();
+            }
+        }
+
+        private static string Fingerprint(IReadOnlyList<VpsInstance> instances) => string.Join("|", instances.Select(i => i.Name + "=" + i.Title));
+
+        internal static VpsSshCredentials SshCredentialsFor(string key) => EntryOf(key)?.Ssh;
+        internal static Func<string, System.Threading.Tasks.Task<string>> SshRunFor(string key) => EntryOf(key)?.Run;
+        internal static IReadOnlyList<VpsInstance> InstancesFor(string key) => EntryOf(key)?.Instances ?? new List<VpsInstance>();
+
+        /// <summary>the terminal behind a key (null if the VPS is not connected by SSH)</summary>
+        internal static VpsInstance InstanceOf(string key)
+        {
+            SplitKey(key, out _, out string name);
+            return InstancesFor(key).FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static VpsEntry EntryOf(string key)
+        {
+            if (key == null) return null;
+            SplitKey(key, out string vpsId, out _);
+
+            lock (Locker)
+            {
+                return Vps.TryGetValue(vpsId, out VpsEntry entry) ? entry : null;
+            }
+        }
+
+        private static VpsEntry Entry(string vpsId)
+        {
+            if (!Vps.TryGetValue(vpsId, out VpsEntry entry))
+            {
+                entry = new VpsEntry();
+                Vps[vpsId] = entry;
+            }
+
+            return entry;
+        }
+
+        // ---- names ----
+
+        /// <summary>
+        /// The name a person sees: the terminal's shown name (its technical name until somebody renames it) and, when this
+        /// computer has several VPS, the name of the VPS before it ("provider · terminal").
+        /// </summary>
+        internal static string TitleOf(string key)
+        {
+            SplitKey(key, out string vpsId, out string name);
+            VpsInstance instance = InstancesFor(key).FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
+            string title = instance?.Title ?? name;
+            return VpsProfiles.All.Count > 1 ? VpsProfiles.NameOf(vpsId) + " · " + title : title;
+        }
+
+        internal static void RaiseInstancesChanged() => InstancesChanged?.Invoke();
+
+        // ---- connections of AI agents (.mcp.json) ----
+
+        /// <summary>the local end of the SSH tunnel and the key of every connected terminal of a VPS (keys: plain terminal names)</summary>
+        internal static void SetMcpEntries(string vpsId, IReadOnlyDictionary<string, (int LocalPort, string Key)> entries)
+        {
+            lock (Locker)
+            {
+                Entry(vpsId).McpEntries = entries == null
+                    ? new Dictionary<string, (int, string)>(StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, (int, string)>(entries, StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        /// <summary>every connected terminal of every VPS with its port and key, and the keys of all the terminals that exist</summary>
+        internal static (Dictionary<string, (int LocalPort, string Key)> Connected, List<string> Existing, HashSet<string> KnownVps) AllMcpEntries()
+        {
+            Dictionary<string, (int LocalPort, string Key)> connected = new Dictionary<string, (int, string)>(StringComparer.OrdinalIgnoreCase);
+            List<string> existing = new List<string>();
+            HashSet<string> known = new HashSet<string>();
+
+            lock (Locker)
+            {
+                foreach (KeyValuePair<string, VpsEntry> vps in Vps)
+                {
+                    foreach (KeyValuePair<string, (int LocalPort, string Key)> entry in vps.Value.McpEntries)
+                    {
+                        connected[Key(vps.Key, entry.Key)] = entry.Value;
+                    }
+
+                    existing.AddRange(vps.Value.Instances.Select(i => Key(vps.Key, i.Name)));
+                    if (vps.Value.Instances.Count > 0) known.Add(vps.Key);
+                }
+            }
+
+            return (connected, existing, known);
         }
     }
 }

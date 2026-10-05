@@ -82,6 +82,20 @@ namespace OsEngineVPS
                 TabControlTerminals.Items.Add(tab);
             }
 
+            // the tabs of a VPS that was removed from the list of Settings go
+            HashSet<string> knownVps = new HashSet<string>(VpsProfiles.All.Select(p => p.Id));
+
+            foreach (string key in _tabs.Keys.ToList())
+            {
+                VpsRemoteSession.SplitKey(key, out string vpsId, out _);
+
+                if (!knownVps.Contains(vpsId))
+                {
+                    TabControlTerminals.Items.Remove(_tabs[key]);
+                    _tabs.Remove(key);
+                }
+            }
+
             // a terminal may have been renamed here or on another computer
             foreach (KeyValuePair<string, TabItem> pair in _tabs)
             {

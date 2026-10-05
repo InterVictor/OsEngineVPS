@@ -212,7 +212,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             Window owner = Window.GetWindow(this);
             if (owner != null && !(owner is OsEngineVPS.MainUi))
                 owner.Title = "Robots.VPS " + OsEngine.PrimeSettings.PrimeSettingsMaster.LabelInHeaderBotStation
-                    + (string.Equals(InstanceName, VpsRemoteSession.MainInstance, StringComparison.OrdinalIgnoreCase) ? "" : " — " + InstanceName);
+                    + (string.Equals(InstanceName, VpsRemoteSession.MainInstance, StringComparison.OrdinalIgnoreCase) ? "" : " — " + VpsRemoteSession.TitleOf(InstanceName));
             LabelOsa.Content = "V_" + System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
             TabItemAllPos.Header = OsLocalization.Trader.Label20;
             TabPortfolios.Header = OsLocalization.Trader.Label21;
