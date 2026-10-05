@@ -21,7 +21,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 {
     public partial class RobotsVpsMarginSettings : UserControl
     {
-        private const int PackSize = 40;
+        private const int PackSize = 8;
 
         private RemoteMcpClient _client;
         private Func<(string Type, int Number)?> _serverProvider;
