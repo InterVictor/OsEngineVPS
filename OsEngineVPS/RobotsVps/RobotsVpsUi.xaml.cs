@@ -268,6 +268,87 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             window.ShowDialog();
         }
 
+        private bool _updatingAll;
+
+        // "Update all": the build of this computer goes to every VPS one after another; each VPS shows its open positions and
+        // asks its own confirmation, a failure of one VPS does not stop the others unless the user says so
+        private async void ButtonUpdateAll_Click(object sender, RoutedEventArgs e)
+        {
+            if (_updatingAll) return;
+
+            UpdatePackageText();
+            string version = VpsProvisioner.LocalPackageVersion();
+
+            if (version == null)
+            {
+                MessageBox.Show(this, "Put the server build package into the VpsServer folder first:\n" + VpsProvisioner.LocalPath(VpsProvisioner.PackageFileName),
+                    "VPS", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            List<VpsProfile> profiles = VpsProfiles.All.Where(p => _panels.ContainsKey(p.Id)).ToList();
+            string overview = string.Join("\n", profiles.Select(p =>
+                $"  {p.Name}: " + (_panels[p.Id].IsConnectedToVps ? "connected" : "NOT connected (skipped)")));
+
+            AcceptDialogUi intro = new AcceptDialogUi(
+                $"Install build {version} on every connected VPS?\n\n{overview}\n\n"
+                + "The VPS are updated one after another. Before each one you see the open positions of its terminals and confirm that VPS separately. "
+                + "A terminal restarts (about 10–30 s without managing its positions).");
+            intro.ShowDialog();
+
+            if (!intro.UserAcceptAction) return;
+
+            _updatingAll = true;
+            ButtonUpdateAll.IsEnabled = false;
+            List<string> summary = new List<string>();
+
+            try
+            {
+                AddLog("", DateTime.Now, $"=== Update all VPS to build {version} ===");
+
+                for (int i = 0; i < profiles.Count; i++)
+                {
+                    VpsProfile profile = profiles[i];
+                    (VpsUpdateOutcome outcome, string info) = await _panels[profile.Id].UpdateBuildForAllAsync(profile.Name, i + 1, profiles.Count).ConfigureAwait(true);
+                    string line = $"{profile.Name}: {OutcomeText(outcome)}" + (string.IsNullOrEmpty(info) ? "" : " (" + info + ")");
+                    summary.Add(line);
+                    AddLog(profile.Name, DateTime.Now, "Update all: " + OutcomeText(outcome) + (string.IsNullOrEmpty(info) ? "" : " (" + info + ")"));
+
+                    if (outcome == VpsUpdateOutcome.Failed && i < profiles.Count - 1)
+                    {
+                        AcceptDialogUi next = new AcceptDialogUi($"Update of VPS \"{profile.Name}\" failed: {info}\n\nContinue with the next VPS?");
+                        next.ShowDialog();
+
+                        if (!next.UserAcceptAction)
+                        {
+                            summary.Add("The rest was not updated (stopped by the user)");
+                            break;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                _updatingAll = false;
+                ButtonUpdateAll.IsEnabled = true;
+                UpdatePackageText();
+            }
+
+            MessageBox.Show(this, "Update all finished:\n\n" + string.Join("\n", summary), "VPS", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private static string OutcomeText(VpsUpdateOutcome outcome)
+        {
+            switch (outcome)
+            {
+                case VpsUpdateOutcome.Done: return "updated";
+                case VpsUpdateOutcome.NothingToDo: return "nothing to update";
+                case VpsUpdateOutcome.Declined: return "skipped (not confirmed)";
+                case VpsUpdateOutcome.Skipped: return "skipped";
+                default: return "FAILED";
+            }
+        }
+
         private void UpdatePackageText()
         {
             try

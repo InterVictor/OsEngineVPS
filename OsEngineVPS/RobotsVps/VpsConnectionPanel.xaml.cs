@@ -977,6 +977,114 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             }
         }
 
+        /// <summary>
+        /// The update of this VPS as a step of "Update all" of the Settings window: the same update as the "Update build" button,
+        /// but it first shows the open positions of the terminals and asks the confirmation for THIS VPS by name.
+        /// Returns what happened and a short text for the summary.
+        /// </summary>
+        public async Task<(VpsUpdateOutcome Outcome, string Info)> UpdateBuildForAllAsync(string vpsName, int number, int total)
+        {
+            if (_sshTunnel == null || !_sshTunnel.StartedByThisWindow)
+            {
+                return (VpsUpdateOutcome.Skipped, "not connected over SSH");
+            }
+
+            UpdatePackageText();
+            string version = VpsProvisioner.LocalPackageVersion();
+
+            if (version == null)
+            {
+                return (VpsUpdateOutcome.Failed, "no build package on this computer");
+            }
+
+            // a stopped terminal stays stopped: the update restarts the service, so only running ones are updated
+            List<VpsInstance> running = _instances.Where(i => i.IsActive).ToList();
+            List<VpsInstance> toUpdate = running.Where(i => i.Build != version).ToList();
+
+            if (toUpdate.Count == 0)
+            {
+                return (VpsUpdateOutcome.NothingToDo, running.Count == 0 ? "no terminal is running" : $"already on build {version}");
+            }
+
+            string list = string.Join("\n", toUpdate.Select(i => $"  {i.Title}: {(string.IsNullOrEmpty(i.Build) ? "unknown" : i.Build)} -> {version}"));
+            string positions = await DescribeOpenPositionsAsync(running).ConfigureAwait(true);
+
+            AcceptDialogUi confirm = new AcceptDialogUi(
+                $"Update VPS \"{vpsName}\" ({number} of {total})?\n\n{list}\n\nOpen positions now:\n{positions}\n\n"
+                + "Terminals are updated one by one; each one's robots stop for about 10–30 s and do not manage their positions meanwhile. "
+                + "If a terminal does not start with the new build, its previous build is put back automatically. "
+                + "Robots, settings, journals and keys are not touched.");
+            confirm.ShowDialog();
+
+            if (!confirm.UserAcceptAction)
+            {
+                return (VpsUpdateOutcome.Declined, "not confirmed");
+            }
+
+            VpsSshCredentials credentials = CreateCredentials();
+            string error = null;
+
+            await RunMaintenanceAsync(async () =>
+            {
+                AppendLog($"=== Update build {version} (Update all) ===");
+
+                try
+                {
+                    await Task.Run(() => new VpsProvisioner(credentials, LogFromAnyThread)
+                        .UpdateBuildAsync(toUpdate, CancellationToken.None)).ConfigureAwait(true);
+                    AppendLog("Build update finished");
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                    AppendLog("Failed: " + ex.Message);
+                }
+            }).ConfigureAwait(true);
+
+            return error == null
+                ? (VpsUpdateOutcome.Done, $"{toUpdate.Count} terminal(s) updated to {version}")
+                : (VpsUpdateOutcome.Failed, error);
+        }
+
+        // "name: none" / "name: 2 (BTCUSDT, ETHUSDT)" for every running terminal, read from its journals over MCP
+        private async Task<string> DescribeOpenPositionsAsync(IEnumerable<VpsInstance> instances)
+        {
+            List<string> lines = new List<string>();
+
+            foreach (VpsInstance instance in instances)
+            {
+                try
+                {
+                    RemoteMcpClient client = VpsRemoteSession.GetClient(VpsRemoteSession.Key(_profileId, instance.Name));
+
+                    if (client == null)
+                    {
+                        lines.Add($"  {instance.Title}: unknown (no MCP connection)");
+                        continue;
+                    }
+
+                    JsonElement answer = await client.CallToolAsync("bot_journal_get_open_positions", new { limit = 500 }).ConfigureAwait(true);
+                    List<string> names = new List<string>();
+
+                    if (answer.TryGetProperty("positions", out JsonElement positions) && positions.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (JsonElement position in positions.EnumerateArray())
+                        {
+                            names.Add(position.TryGetProperty("security_name", out JsonElement security) ? security.GetString() : "?");
+                        }
+                    }
+
+                    lines.Add(names.Count == 0 ? $"  {instance.Title}: none" : $"  {instance.Title}: {names.Count} ({string.Join(", ", names.Take(6))}{(names.Count > 6 ? ", ..." : "")})");
+                }
+                catch (Exception ex)
+                {
+                    lines.Add($"  {instance.Title}: unknown ({ex.Message})");
+                }
+            }
+
+            return lines.Count == 0 ? "  —" : string.Join("\n", lines);
+        }
+
         private async void ButtonUpdateBuild_Click(object sender, RoutedEventArgs e)
         {
             if (!EnsureSshCommands()) return;
@@ -1395,6 +1503,19 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
         }
 
         #endregion
+    }
+
+    /// <summary>how the update of one VPS ended in "Update all"</summary>
+    public enum VpsUpdateOutcome
+    {
+        /// <summary>not connected by SSH of this program: nothing to do</summary>
+        Skipped,
+        /// <summary>every running terminal already runs the local build (or none runs)</summary>
+        NothingToDo,
+        /// <summary>the user did not confirm this VPS</summary>
+        Declined,
+        Done,
+        Failed
     }
 
     public class LogRow

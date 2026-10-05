@@ -41,6 +41,8 @@
                             ToolTip="Folders whose AI agent sessions (Claude and other MCP clients) can control the terminals of all VPS"/>
                     <TextBlock Name="TextBlockMcpAccess" Foreground="Gray" Margin="0,4,0,0" TextWrapping="Wrap"/>
                     <TextBlock Name="TextBlockPackage" Foreground="Gray" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                    <Button Name="ButtonUpdateAll" Content="Update all VPS..." Width="150" Height="26" HorizontalAlignment="Left" Margin="0,6,0,0" Click="ButtonUpdateAll_Click"
+                            ToolTip="Installs the build package of this computer on the running terminals of every connected VPS, one VPS after another. Before each VPS the open positions are shown and a confirmation is asked."/>
                 </StackPanel>
             </Grid>
         </Border>
