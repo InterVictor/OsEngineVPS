@@ -60,13 +60,20 @@
                         <RowDefinition Height="26"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <StackPanel Orientation="Horizontal" Grid.Row="0">
-                        <Label Name="LabelMarginMode" Content="Margin" Padding="0,4,6,0" VerticalContentAlignment="Center"/>
-                        <ComboBox Name="ComboBoxMarginMode" Width="86" Height="22" VerticalContentAlignment="Center"/>
-                        <Label Name="LabelMarginLeverage" Content="Leverage" Padding="10,4,6,0" VerticalContentAlignment="Center"/>
-                        <TextBox Name="TextBoxMarginLeverage" Style="{StaticResource TextBoxRectangular}" Width="38" Height="22" TextAlignment="Center" MaxLength="3"/>
-                        <Button Name="ButtonApplyMargin" Content="Apply" Width="62" Height="22" Margin="10,0,0,0" ToolTip="Sends the margin mode and leverage to the exchange"/>
-                    </StackPanel>
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*" MinWidth="64"/>
+                        </Grid.ColumnDefinitions>
+                        <Label Name="LabelMarginMode" Grid.Column="0" Content="Margin" Padding="0,4,4,0" VerticalContentAlignment="Center"/>
+                        <ComboBox Name="ComboBoxMarginMode" Grid.Column="1" Width="78" Height="22" VerticalContentAlignment="Center"/>
+                        <Label Name="LabelMarginLeverage" Grid.Column="2" Content="Leverage" Padding="8,4,4,0" VerticalContentAlignment="Center"/>
+                        <TextBox Name="TextBoxMarginLeverage" Grid.Column="3" Style="{StaticResource TextBoxRectangular}" Width="30" Height="22" TextAlignment="Center" MaxLength="3"/>
+                        <Button Name="ButtonApplyMargin" Grid.Column="4" Content="Apply" Height="22" Margin="6,0,0,0" Padding="4,0,4,0" ToolTip="Sends the margin mode and leverage to the exchange"/>
+                    </Grid>
                     <TextBlock Name="TextBlockMarginState" Grid.Row="1" FontSize="10" TextWrapping="Wrap" Foreground="Gray" VerticalAlignment="Top" Margin="0,2,0,0" Text="Margin settings: waiting for data"/>
                 </Grid>
             </Border>
