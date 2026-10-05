@@ -1461,6 +1461,7 @@ namespace OsEngine.MCP
                     case "server_instance_get_non_trade_periods":
                     case "server_instance_set_non_trade_periods":
                     case "server_instance_get_portfolios":
+                    case "server_instance_get_margin_info":
                     case "server_instance_close_position_on_board":
                     case "server_instance_get_status":
                     case "server_instance_get_active_orders":
@@ -1533,6 +1534,8 @@ namespace OsEngine.MCP
                     case "tester_execution_set_config":
                     case "tester_portfolio_get_config":
                     case "tester_portfolio_set_config":
+                    case "tester_charges_get_config":
+                    case "tester_charges_set_config":
                     case "tester_start":
                     case "tester_pause":
                     case "tester_fast_forward":

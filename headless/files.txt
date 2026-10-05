@@ -340,9 +340,11 @@ Market/Servers/Binance/Spot/BinanceSpotEntity/TradeResponse.cs
 Market/Servers/BybitData/Entity/ByBitDataResponse.cs
 Market/Servers/ComparePositionsModule.cs
 Market/Servers/Entity/BidAskSender.cs
+Market/Servers/Entity/IServerMarginInfo.cs
 Market/Servers/Entity/MarshalUTF8.cs
 Market/Servers/Entity/OrderSender.cs
 Market/Servers/Entity/RateGate.cs
+Market/Servers/Entity/SecurityMarginInfo.cs
 Market/Servers/Entity/ServerParameter.cs
 Market/Servers/Entity/ServerWorkingTimeSettings.cs
 Market/Servers/Entity/TimeManager.cs

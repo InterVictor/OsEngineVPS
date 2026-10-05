@@ -33,6 +33,10 @@ mv -f "$DIR/ShimGen/refs.json.new" "$DIR/ShimGen/refs.json"
 echo "== 1/4 PathFix ($SRC)"
 (cd "$DIR/PathFix" && dotnet run -- "$SRC" ../files.txt ../OsEngine.Headless/core-src ../pathfix-report.tsv) | tail -1
 
+# the compile list of OsEngine.Headless.csproj (core-files.props) follows files.txt; it was only made by closure.sh/shimloop.sh,
+# so a file added to files.txt was copied by PathFix but not compiled (found 2026-10-05 with SecurityMarginInfo)
+{ echo '<Project><ItemGroup>'; tr '/' '\' < "$DIR/files.txt" | awk '{print "    <Compile Include=\"core-src\\" $0 "\" Link=\"core\\" $0 "\" />"}'; echo '</ItemGroup></Project>'; } > "$DIR/OsEngine.Headless/core-files.props"
+
 echo "== 2/4 ShimGen"
 GEN=$(cd "$DIR" && OSENGINE_SRC="$SRC" bash gen.sh 2>&1)
 grep -i "fullCompileErrors" <<< "$GEN" || true

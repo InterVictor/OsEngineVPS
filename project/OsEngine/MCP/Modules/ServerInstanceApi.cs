@@ -166,6 +166,10 @@ namespace OsEngine.MCP.Modules
                         response.Result = GetServerPortfolios(request.Params);
                         break;
 
+                    case "server_instance_get_margin_info":
+                        response.Result = GetServerMarginInfo(request.Params);
+                        break;
+
                     case "server_instance_close_position_on_board":
                         response.Result = ClosePositionOnBoard(request.Params);
                         break;
@@ -406,6 +410,24 @@ namespace OsEngine.MCP.Modules
                                 type = "integer",
                                 description = "Server instance number (default: 0)"
                             }
+                        },
+                        required = new[] { "type" }
+                    }
+                },
+                new McpTool
+                {
+                    Name = "server_instance_get_margin_info",
+                    Description = "Read only: margin mode (isolated or cross) and leverage of securities as the exchange reported them last time (Binance Futures). Without security_names returns all securities the connector knows. Securities without data are listed in unknown_count, not returned",
+                    InputSchema = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            type = new { type = "string", description = "Server type name, e.g. BinanceFutures" },
+                            number = new { type = "integer", description = "Server instance number (default: 0)" },
+                            security_names = new { type = "array", items = new { type = "string" }, description = "Securities to report (default: all)" },
+                            only_isolated = new { type = "boolean", description = "Return only securities on isolated margin" },
+                            min_leverage = new { type = "number", description = "Return only securities with leverage not below this value" }
                         },
                         required = new[] { "type" }
                     }
@@ -1276,6 +1298,95 @@ namespace OsEngine.MCP.Modules
                 number = serverNumber,
                 count = result.Count,
                 portfolios = result
+            };
+        }
+
+        // Read only: margin mode and leverage from AServer.GetMarginInfo (the connector keeps what the exchange reported with the account state)
+        private static object GetServerMarginInfo(JsonElement parameters)
+        {
+            ServerType serverType = ParseServerType(parameters);
+            int serverNumber = ParseServerNumber(parameters);
+
+            AServer server = FindServer(serverType, serverNumber);
+
+            if (server == null)
+            {
+                throw new ArgumentException($"Server {serverType}#{serverNumber} not found");
+            }
+
+            List<string> names = new List<string>();
+
+            if (parameters.TryGetProperty("security_names", out JsonElement namesElement)
+                && namesElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in namesElement.EnumerateArray())
+                {
+                    string name = item.GetString();
+
+                    if (!string.IsNullOrWhiteSpace(name))
+                    {
+                        names.Add(name);
+                    }
+                }
+            }
+            else
+            {
+                List<Security> securities = server.Securities;
+
+                for (int i = 0; securities != null && i < securities.Count; i++)
+                {
+                    names.Add(securities[i].Name);
+                }
+            }
+
+            bool onlyIsolated = parameters.TryGetProperty("only_isolated", out JsonElement isolatedElement)
+                && isolatedElement.ValueKind == JsonValueKind.True;
+
+            decimal minLeverage = parameters.TryGetProperty("min_leverage", out JsonElement leverageElement)
+                && leverageElement.ValueKind == JsonValueKind.Number
+                ? leverageElement.GetDecimal() : 0;
+
+            List<object> result = new List<object>();
+            int unknown = 0;
+            int isolatedCount = 0;
+
+            for (int i = 0; i < names.Count; i++)
+            {
+                SecurityMarginInfo info = server.GetMarginInfo(names[i]);
+
+                if (info == null)
+                {
+                    unknown++;
+                    continue;
+                }
+
+                if (info.IsIsolated)
+                {
+                    isolatedCount++;
+                }
+
+                if ((onlyIsolated && !info.IsIsolated) || info.Leverage < minLeverage)
+                {
+                    continue;
+                }
+
+                result.Add(new
+                {
+                    security_name = info.SecurityNameCode,
+                    leverage = info.Leverage,
+                    is_isolated = info.IsIsolated,
+                    time_update = info.TimeUpdate
+                });
+            }
+
+            return new
+            {
+                type = serverType.ToString(),
+                number = serverNumber,
+                count = result.Count,
+                unknown_count = unknown,
+                isolated_count = isolatedCount,
+                securities = result
             };
         }
 
