@@ -122,7 +122,7 @@
                           AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
                           Style="{StaticResource DataGridStyle}">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="Terminal" Width="*" Binding="{Binding Name}"/>
+                        <DataGridTextColumn Header="Terminal" Width="*" Binding="{Binding Title}"/>
                         <DataGridTextColumn Header="MCP port" Width="80" Binding="{Binding Port}"/>
                         <DataGridTextColumn Header="Service" Width="100" Binding="{Binding State}"/>
                         <DataGridTextColumn Header="CPU" Width="70" Binding="{Binding Cpu}"/>
@@ -148,6 +148,8 @@
                         <Button Name="ButtonTerminalRestart" Content="Restart" Height="24" Margin="0,2,2,0" Click="ButtonTerminalRestart_Click"/>
                         <Button Name="ButtonTerminalRemove" Content="Remove" Height="24" Margin="2,2,0,0" Click="ButtonTerminalRemove_Click"/>
                     </UniformGrid>
+                    <Button Name="ButtonTerminalRename" Content="Rename..." Height="24" Margin="0,4,0,0" Click="ButtonTerminalRename_Click"
+                            ToolTip="Change the name shown for the terminal (only the shown name; the service, the folder and the connection of AI agents keep their names)"/>
                 </StackPanel>
 
                 <!-- Обслуживание: обновление сборки, роботы, логи, перезагрузка VPS -->

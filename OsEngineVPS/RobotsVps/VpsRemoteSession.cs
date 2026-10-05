@@ -45,10 +45,23 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
         internal static void SetSsh(VpsSshCredentials credentials, Func<string, System.Threading.Tasks.Task<string>> run, IReadOnlyList<VpsInstance> instances)
         {
+            string before = string.Join("|", Instances.Select(i => i.Name + "=" + i.Title));
             SshCredentials = credentials;
             SshRun = run;
             Instances = instances ?? new List<VpsInstance>();
+
+            // a terminal was renamed (here or on another computer): the tabs must show the new name
+            if (before != string.Join("|", Instances.Select(i => i.Name + "=" + i.Title)))
+            {
+                InstancesChanged?.Invoke();
+            }
         }
+
+        /// <summary>the shown name of a terminal (its technical name until somebody renames it)</summary>
+        internal static string TitleOf(string instanceName) =>
+            Instances.FirstOrDefault(i => string.Equals(i.Name, instanceName, StringComparison.OrdinalIgnoreCase))?.Title ?? instanceName;
+
+        internal static void RaiseInstancesChanged() => InstancesChanged?.Invoke();
 
         /// <summary>the terminal name of a client from GetClient, or null</summary>
         public static string GetInstanceName(RemoteMcpClient client)

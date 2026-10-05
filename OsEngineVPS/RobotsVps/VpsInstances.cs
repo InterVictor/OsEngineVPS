@@ -13,7 +13,15 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
     //   <name> -> service osengine-<name>, /opt/osengine-<name>, port 6501, 6502, ...
     internal sealed class VpsInstance
     {
+        // the stable technical name (service osengine / osengine-<name>); never changes, the folders, ports and the
+        // names of the AI-agent connections (.mcp.json) are built from it
         public string Name { get; set; }
+
+        // the name shown to people (OsEngineVPS tabs, settings); kept on the VPS in /etc/osengine/names.conf so that every
+        // computer sees the same. Empty = the technical name
+        public string DisplayName { get; set; }
+
+        public string Title => string.IsNullOrWhiteSpace(DisplayName) ? Name : DisplayName;
         public string Service { get; set; }
         public int Port { get; set; }
         public string DataRoot { get; set; }
@@ -65,13 +73,20 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
                 "ver=$(cut -c1-8 \"$(dirname \"$root\")/app/.package-sha256\" 2>/dev/null); " +
                 "cpu=$(systemctl show \"$svc\" -p CPUUsageNSec --value); " +
                 "echo \"$svc|$port|$root|$key|$state|$mem|$ver|$cpu\"; " +
-                "done; true";
+                "done; [ -f /etc/osengine/names.conf ] && sed 's/^/NAMES|/' /etc/osengine/names.conf; true";
 
             string output = await run(script).ConfigureAwait(false);
             List<VpsInstance> result = new List<VpsInstance>();
+            List<string> displayNames = new List<string>();
 
             foreach (string line in output.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0))
             {
+                if (line.StartsWith("NAMES|", StringComparison.Ordinal))
+                {
+                    displayNames.Add(line.Substring("NAMES|".Length));
+                    continue;
+                }
+
                 string[] parts = line.Split('|');
                 if (parts.Length < 6 || !int.TryParse(parts[1], out int port)) continue;
 
@@ -94,7 +109,54 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
                 });
             }
 
+            foreach (VpsInstance instance in result)
+            {
+                string line = displayNames.FirstOrDefault(n => n.StartsWith(instance.Service + "=", StringComparison.Ordinal));
+                instance.DisplayName = line == null ? null : line.Substring(instance.Service.Length + 1).Trim();
+            }
+
             return result.OrderBy(i => i.IsMain ? 0 : 1).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        // what a person may call a terminal: any letters (also Cyrillic), digits, spaces, '-', '_' ...; the file format of
+        // names.conf (one "service=name" line) forbids '=', '|' and line breaks
+        public static bool IsValidDisplayName(string name) =>
+            !string.IsNullOrWhiteSpace(name) && name.Trim().Length <= 30 && name.IndexOfAny(new[] { '=', '|', '\r', '\n', '\0', '\t' }) < 0;
+
+        // Writes the display name of one terminal into /etc/osengine/names.conf (the names of all the others are kept).
+        // Only the shown name changes: the service, the folder, the MCP port and the connection names of the AI agents stay.
+        public static async Task RenameAsync(Func<string, Task<string>> run, IReadOnlyList<VpsInstance> instances, VpsInstance target, string displayName)
+        {
+            string title = (displayName ?? string.Empty).Trim();
+
+            if (!IsValidDisplayName(title))
+            {
+                throw new InvalidOperationException("The name must be 1-30 characters, without '=', '|' and line breaks");
+            }
+
+            if (instances.Any(i => !ReferenceEquals(i, target)
+                && (string.Equals(i.Title, title, StringComparison.OrdinalIgnoreCase) || string.Equals(i.Name, title, StringComparison.OrdinalIgnoreCase))))
+            {
+                throw new InvalidOperationException("Another terminal already has this name");
+            }
+
+            System.Text.StringBuilder text = new System.Text.StringBuilder();
+
+            foreach (VpsInstance instance in instances)
+            {
+                string value = ReferenceEquals(instance, target) ? title : instance.Title;
+
+                if (!string.Equals(value, instance.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    text.Append(instance.Service).Append('=').Append(value).Append('\n');
+                }
+            }
+
+            // base64: the name may hold quotes, spaces or Cyrillic letters
+            string encoded = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(text.ToString()));
+            await run("mkdir -p /etc/osengine && echo " + encoded + " | base64 -d > /etc/osengine/names.conf.tmp && mv /etc/osengine/names.conf.tmp /etc/osengine/names.conf && chmod 644 /etc/osengine/names.conf").ConfigureAwait(false);
+
+            target.DisplayName = string.Equals(title, target.Name, StringComparison.OrdinalIgnoreCase) ? null : title;
         }
 
         public static int NextFreePort(IEnumerable<VpsInstance> existing)

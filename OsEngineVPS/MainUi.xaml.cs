@@ -69,12 +69,28 @@ namespace OsEngineVPS
             {
                 TabItem tab = new TabItem
                 {
-                    Header = name,
+                    Header = VpsRemoteSession.TitleOf(name),
                     Content = new RobotsVpsLiteClone { InstanceName = name }
                 };
 
+                string terminalName = name;
+                MenuItem rename = new MenuItem { Header = "Rename..." };
+                rename.Click += async (s, e) => await _settings.RenameTerminalAsync(terminalName);
+                tab.ContextMenu = new ContextMenu { Items = { rename } };
+
                 _tabs[name] = tab;
                 TabControlTerminals.Items.Add(tab);
+            }
+
+            // a terminal may have been renamed here or on another computer
+            foreach (KeyValuePair<string, TabItem> pair in _tabs)
+            {
+                string title = VpsRemoteSession.TitleOf(pair.Key);
+
+                if (!Equals(pair.Value.Header, title))
+                {
+                    pair.Value.Header = title;
+                }
             }
 
             if (TabControlTerminals.SelectedItem == null && TabControlTerminals.Items.Count > 0)
@@ -84,7 +100,7 @@ namespace OsEngineVPS
 
             TextBlockConnection.Text = names.Count == 0
                 ? "Not connected to the VPS — press Settings"
-                : "Connected: " + string.Join(", ", names);
+                : "Connected: " + string.Join(", ", names.Select(VpsRemoteSession.TitleOf));
         }
     }
 }

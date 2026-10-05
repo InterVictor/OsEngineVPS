@@ -458,7 +458,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
                     }
                     catch (Exception ex)
                     {
-                        AppendLog($"Terminal \"{instance.Name}\": could not connect: {ex.Message}");
+                        AppendLog($"Terminal \"{instance.Title}\": could not connect: {ex.Message}");
                     }
                 }
 
@@ -712,6 +712,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
                 _terminalRows.Add(new TerminalRow
                 {
                     Name = instance.Name,
+                    Title = instance.Title,
                     Port = instance.Port,
                     State = instance.State,
                     Memory = instance.MemoryText,
@@ -777,7 +778,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             if (!EnsureSshCommands()) return;
             VpsInstance instance = SelectedInstance();
             if (instance == null) return;
-            await RunTerminalActionAsync($"Starting terminal \"{instance.Name}\"",
+            await RunTerminalActionAsync($"Starting terminal \"{instance.Title}\"",
                 () => VpsInstances.StartAsync(_sshTunnel.RunCommandAsync, instance)).ConfigureAwait(true);
         }
 
@@ -787,11 +788,11 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             VpsInstance instance = SelectedInstance();
             if (instance == null) return;
 
-            AcceptDialogUi confirm = new AcceptDialogUi($"Stop terminal \"{instance.Name}\"? Its robots stop trading until it is started again.");
+            AcceptDialogUi confirm = new AcceptDialogUi($"Stop terminal \"{instance.Title}\"? Its robots stop trading until it is started again.");
             confirm.ShowDialog();
             if (!confirm.UserAcceptAction) return;
 
-            await RunTerminalActionAsync($"Stopping terminal \"{instance.Name}\"",
+            await RunTerminalActionAsync($"Stopping terminal \"{instance.Title}\"",
                 () => VpsInstances.StopAsync(_sshTunnel.RunCommandAsync, instance)).ConfigureAwait(true);
         }
 
@@ -801,11 +802,11 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             VpsInstance instance = SelectedInstance();
             if (instance == null) return;
 
-            AcceptDialogUi confirm = new AcceptDialogUi($"Restart terminal \"{instance.Name}\"? Its robots are stopped and started again.");
+            AcceptDialogUi confirm = new AcceptDialogUi($"Restart terminal \"{instance.Title}\"? Its robots are stopped and started again.");
             confirm.ShowDialog();
             if (!confirm.UserAcceptAction) return;
 
-            await RunTerminalActionAsync($"Restarting terminal \"{instance.Name}\"",
+            await RunTerminalActionAsync($"Restarting terminal \"{instance.Title}\"",
                 () => VpsInstances.RestartAsync(_sshTunnel.RunCommandAsync, instance)).ConfigureAwait(true);
         }
 
@@ -822,15 +823,51 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             }
 
             AcceptDialogUi confirm = new AcceptDialogUi(
-                $"Remove terminal \"{instance.Name}\"?\n\nIts service is stopped and deleted. Its data (robots, settings, journals) "
+                $"Remove terminal \"{instance.Title}\"?\n\nIts service is stopped and deleted. Its data (robots, settings, journals) "
                 + "is not deleted but moved to /opt/osengine-removed on the VPS.");
             confirm.ShowDialog();
             if (!confirm.UserAcceptAction) return;
 
-            await RunTerminalActionAsync($"Removing terminal \"{instance.Name}\"", async () =>
+            await RunTerminalActionAsync($"Removing terminal \"{instance.Title}\"", async () =>
             {
                 string moved = await VpsInstances.RemoveAsync(_sshTunnel.RunCommandAsync, instance).ConfigureAwait(true);
-                AppendLog($"Data of terminal \"{instance.Name}\" moved to {moved.Trim()}");
+                AppendLog($"Data of terminal \"{instance.Title}\" moved to {moved.Trim()}");
+            }).ConfigureAwait(true);
+        }
+
+        private async void ButtonTerminalRename_Click(object sender, RoutedEventArgs e)
+        {
+            VpsInstance instance = SelectedInstance();
+
+            if (instance != null)
+            {
+                await RenameTerminalAsync(instance.Name);
+            }
+        }
+
+        // also called from the tabs of the main window (context menu "Rename...")
+        public async Task RenameTerminalAsync(string terminalName)
+        {
+            if (!EnsureSshCommands()) return;
+
+            VpsInstance instance = _instances.FirstOrDefault(i => string.Equals(i.Name, terminalName, StringComparison.OrdinalIgnoreCase));
+
+            if (instance == null)
+            {
+                MessageBox.Show("The terminal was not found on the VPS");
+                return;
+            }
+
+            RobotsVpsRenameDialog dialog = new RobotsVpsRenameDialog(instance.Title, instance.Name) { Owner = IsVisible ? this : Application.Current.MainWindow };
+
+            if (dialog.ShowDialog() != true) return;
+
+            await RunTerminalActionAsync($"Renaming terminal \"{instance.Title}\" to \"{dialog.NewName}\"", async () =>
+            {
+                await VpsInstances.RenameAsync(_sshTunnel.RunCommandAsync, _instances, instance, dialog.NewName).ConfigureAwait(true);
+                AppendLog($"Terminal \"{instance.Title}\" is shown as \"{instance.Title}\" now");
+                RenderTerminals();
+                VpsRemoteSession.RaiseInstancesChanged();
             }).ConfigureAwait(true);
         }
 
@@ -1015,7 +1052,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
         // own — a terminal that cannot re-read (an older build, no answer) is left to the Restart button.
         private async Task ApplyRobotChangesAsync(VpsInstance instance, List<string> classNames)
         {
-            AppendLog($"=== Robot scripts changed on terminal \"{instance.Name}\" ===");
+            AppendLog($"=== Robot scripts changed on terminal \"{instance.Title}\" ===");
 
             RemoteMcpClient client = VpsRemoteSession.GetClient(instance.Name);
 
@@ -1023,11 +1060,11 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             {
                 if (client == null || !client.IsConnected) throw new InvalidOperationException("the terminal is not connected");
                 await client.CallToolAsync("wiki_robots_reload_scripts", new { }).ConfigureAwait(true);
-                AppendLog($"Terminal \"{instance.Name}\" re-read the robot scripts (running robots keep their version)");
+                AppendLog($"Terminal \"{instance.Title}\" re-read the robot scripts (running robots keep their version)");
             }
             catch (Exception ex)
             {
-                AppendLog($"Terminal \"{instance.Name}\" could not re-read the robot scripts ({ex.Message}) — "
+                AppendLog($"Terminal \"{instance.Title}\" could not re-read the robot scripts ({ex.Message}) — "
                     + "restart it with the Restart button to pick up the changes");
                 return;
             }
@@ -1107,7 +1144,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             if (instance == null) return;
 
             AcceptDialogUi confirm = new AcceptDialogUi(
-                $"Clean the logs of terminal \"{instance.Name}\"?\n\nIts OsEngine log files are deleted except today's; "
+                $"Clean the logs of terminal \"{instance.Title}\"?\n\nIts OsEngine log files are deleted except today's; "
                 + "the system journal of the VPS keeps the last 7 days. Robots keep working.");
             confirm.ShowDialog();
             if (!confirm.UserAcceptAction) return;
@@ -1118,7 +1155,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             {
                 string report = await Task.Run(() => new VpsProvisioner(credentials, LogFromAnyThread)
                     .CleanLogsAsync(instance, CancellationToken.None)).ConfigureAwait(true);
-                AppendLog($"Logs of terminal \"{instance.Name}\" cleaned: {report}");
+                AppendLog($"Logs of terminal \"{instance.Title}\" cleaned: {report}");
             }).ConfigureAwait(true);
         }
 
@@ -1252,14 +1289,14 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             try
             {
                 VpsSshCredentials credentials = CreateCredentials();
-                AppendLog($"{what} of terminal \"{instance.Name}\"...");
+                AppendLog($"{what} of terminal \"{instance.Title}\"...");
                 string file = await Task.Run(() => new VpsProvisioner(credentials, LogFromAnyThread)
                     .BackupAsync(instance, CancellationToken.None)).ConfigureAwait(true);
-                AppendLog($"{what} of terminal \"{instance.Name}\" saved: {file} ({new FileInfo(file).Length / 1024} KB)");
+                AppendLog($"{what} of terminal \"{instance.Title}\" saved: {file} ({new FileInfo(file).Length / 1024} KB)");
             }
             catch (Exception ex)
             {
-                AppendLog($"{what} of terminal \"{instance.Name}\" failed: {ex.Message}");
+                AppendLog($"{what} of terminal \"{instance.Title}\" failed: {ex.Message}");
             }
             finally
             {
@@ -1300,7 +1337,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             string folder = VpsProvisioner.BackupFolder(TextBoxSshHost.Text.Trim(), instance.Name);
             Microsoft.Win32.OpenFileDialog dialog = new Microsoft.Win32.OpenFileDialog
             {
-                Title = $"Backup to restore into terminal \"{instance.Name}\"",
+                Title = $"Backup to restore into terminal \"{instance.Title}\"",
                 Filter = "OsEngine data backup (*.tgz)|*.tgz",
                 InitialDirectory = Directory.Exists(folder) ? folder : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "VpsBackups")
             };
@@ -1309,7 +1346,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
             string archive = dialog.FileName;
 
             AcceptDialogUi confirm = new AcceptDialogUi(
-                $"Restore terminal \"{instance.Name}\" from\n{Path.GetFileName(archive)}?\n\n"
+                $"Restore terminal \"{instance.Title}\" from\n{Path.GetFileName(archive)}?\n\n"
                 + "The terminal is stopped, its data (bots, settings, journals, robot scripts, MCP key) is replaced with the "
                 + "backup and it is started again. The current data is NOT deleted: it stays on the VPS as "
                 + "data.before-restore-<time>. Open positions of its robots are only what the backup contains.");
@@ -1320,7 +1357,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
 
             await RunMaintenanceAsync(async () =>
             {
-                AppendLog($"=== Restore terminal \"{instance.Name}\" from {Path.GetFileName(archive)} ===");
+                AppendLog($"=== Restore terminal \"{instance.Title}\" from {Path.GetFileName(archive)} ===");
                 await Task.Run(() => new VpsProvisioner(credentials, LogFromAnyThread)
                     .RestoreAsync(instance, archive, CancellationToken.None)).ConfigureAwait(true);
 
@@ -1361,6 +1398,7 @@ namespace OsEngine.OsTrader.Gui.RobotsVps
     public class TerminalRow
     {
         public string Name { get; set; }
+        public string Title { get; set; }
         public int Port { get; set; }
         public string State { get; set; }
         public string Memory { get; set; }
